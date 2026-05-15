@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>COGS — Fill/Finish Pharma Cost Calculator</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap">
+<style>
+  :root {
+    --bg:#07090f; --surface:#0e1420; --border:rgba(255,255,255,0.06);
+    --accent:#4f8ef7; --green:#10b981; --red:#ef4444; --amber:#f59e0b; --purple:#a78bfa;
+    --text:#e2e8f0; --muted:#475569;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'Inter',-apple-system,sans-serif;font-size:15px;min-height:100vh}
+  body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+    background:radial-gradient(ellipse at 10% 10%,rgba(79,142,247,0.07) 0%,transparent 45%),
+               radial-gradient(ellipse at 90% 90%,rgba(167,139,250,0.05) 0%,transparent 45%)}
+  .container{max-width:1220px;margin:0 auto;padding:48px 24px 80px;position:relative;z-index:1}
+
+  /* HEADER */
+  header{margin-bottom:40px}
+  .eyebrow{font-size:.62rem;letter-spacing:4px;text-transform:uppercase;color:var(--accent);
+    margin-bottom:14px;display:flex;align-items:center;gap:10px}
+  .eyebrow::before{content:'';display:inline-block;width:24px;height:1px;background:var(--accent)}
+  h1{font-size:clamp(1.9rem,4vw,2.9rem);font-weight:700;letter-spacing:-1.5px;
+    background:linear-gradient(135deg,#fff 0%,rgba(255,255,255,0.45) 100%);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+    line-height:1.05;margin-bottom:8px}
+  .subtitle{color:var(--muted);font-size:.88rem}
+
+  /* TOGGLES (top bar) */
+  .toggle-bar{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:24px}
+  .tog{display:flex;align-items:center;gap:10px;background:var(--surface);
+    border:1px solid var(--border);border-radius:12px;padding:10px 18px;cursor:pointer}
+  .tog input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+  .tog-label{font-size:.78rem;font-weight:500;letter-spacing:.3px}
+  .tog-sub{font-size:.68rem;color:var(--muted)}
+  .util-bar{display:flex;align-items:center;gap:14px;background:var(--surface);
+    border:1px solid var(--border);border-radius:12px;padding:10px 18px}
+  .util-bar label{font-size:.78rem;font-weight:500;white-space:nowrap}
+  .util-bar input[type=range]{width:140px;accent-color:var(--accent)}
+  .util-val{font-size:.88rem;font-weight:600;color:var(--accent);min-width:38px}
+  .margin-bar{display:flex;align-items:center;gap:10px;background:var(--surface);
+    border:1px solid var(--border);border-radius:12px;padding:10px 18px}
+  .margin-bar label{font-size:.78rem;font-weight:500;white-space:nowrap}
+  .margin-bar input[type=number]{width:60px;background:rgba(255,255,255,0.05);
+    border:1px solid var(--border);border-radius:7px;color:var(--text);
+    font-family:inherit;font-size:.88rem;padding:4px 8px;text-align:right}
+
+  /* LAYOUT */
+  .layout{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+  @media(max-width:900px){.layout{grid-template-columns:1fr}}
+
+  /* INPUT GROUPS */
+  .ig{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:16px}
+  .ig-title{font-size:.58rem;letter-spacing:3px;text-transform:uppercase;color:var(--muted);
+    margin-bottom:16px;display:flex;align-items:center;gap:10px}
+  .ig-title::after{content:'';flex:1;height:1px;background:var(--border)}
+  .fg{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
+  .f{display:flex;flex-direction:column;gap:5px}
+  .f label{font-size:.68rem;color:var(--muted);letter-spacing:.3px}
+  .f input,.f select{background:rgba(255,255,255,0.04);border:1px solid var(--border);
+    border-radius:8px;color:var(--text);font-family:inherit;font-size:.85rem;
+    padding:8px 11px;width:100%;transition:border-color .15s;-webkit-appearance:none}
+  .f input:focus,.f select:focus{outline:none;border-color:var(--accent)}
+  .f-note{font-size:.64rem;color:var(--muted);line-height:1.4}
+  .f-wide{grid-column:1/-1}
+
+  /* PRODUCTION SUMMARY */
+  .prod-summary{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:16px}
+  .ps-title{font-size:.58rem;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:14px;
+    display:flex;align-items:center;gap:10px}
+  .ps-title::after{content:'';flex:1;height:1px;background:var(--border)}
+  .ps-grid{display:grid;grid-template-columns:1fr 1fr;gap:0}
+  .ps-row{display:flex;justify-content:space-between;align-items:baseline;
+    padding:7px 0;border-bottom:1px solid var(--border);font-size:.82rem;gap:8px}
+  .ps-row:last-child{border-bottom:none}
+  .ps-lbl{color:var(--muted)}
+  .ps-val{font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
+  .ps-section{padding:0 10px}
+  .ps-section:first-child{border-right:1px solid var(--border);padding-left:0;padding-right:16px}
+  .ps-section:last-child{padding-left:16px;padding-right:0}
+  .warn{color:var(--red) !important}
+  .ok{color:var(--green) !important}
+  .amber{color:var(--amber) !important}
+
+  /* COST SUMMARY CARDS */
+  .cost-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px}
+  @media(max-width:700px){.cost-cards{grid-template-columns:1fr 1fr}}
+  .cc{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px}
+  .cc-lbl{font-size:.58rem;letter-spacing:2.5px;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+  .cc-val{font-size:1.5rem;font-weight:700;letter-spacing:-.5px;font-variant-numeric:tabular-nums}
+  .cc-sub{font-size:.72rem;color:var(--muted);margin-top:3px}
+  .cc-accent{color:var(--accent)}
+  .cc-green{color:var(--green)}
+  .cc-amber{color:var(--amber)}
+
+  /* BREAKDOWN TABLE */
+  .section-title{font-size:.58rem;letter-spacing:3px;text-transform:uppercase;color:var(--muted);
+    margin-bottom:16px;display:flex;align-items:center;gap:12px}
+  .section-title::after{content:'';flex:1;height:1px;background:var(--border)}
+  .bt{width:100%;border-collapse:collapse;font-size:.84rem}
+  .bt th{text-align:left;font-size:.58rem;letter-spacing:1.5px;text-transform:uppercase;
+    color:var(--muted);padding:0 14px 10px;border-bottom:1px solid var(--border)}
+  .bt th:not(:first-child){text-align:right}
+  .bt td{padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:middle}
+  .bt td:not(:first-child){text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .bt tr:hover td{background:rgba(255,255,255,0.02)}
+  .bt tr:last-child td{border-bottom:none}
+  .cat-name{font-weight:500;color:var(--text);margin-bottom:2px}
+  .cat-note{font-size:.71rem;color:#64748b;line-height:1.4}
+  .cat-bar-wrap{height:4px;background:rgba(255,255,255,0.06);border-radius:2px;margin-top:6px;overflow:hidden}
+  .cat-bar{height:100%;border-radius:2px;transition:width .4s ease}
+  .num{color:#94a3b8}
+  .num-hi{color:var(--text);font-weight:600}
+  .subtotal-row td{border-top:2px solid var(--border);font-weight:600;color:var(--text);padding-top:14px}
+  .margin-row td{color:var(--amber)}
+  .total-row td{border-top:2px solid var(--accent);font-size:1rem;font-weight:700;
+    color:var(--accent);padding-top:14px;border-bottom:none}
+  .disabled-row td{opacity:.35}
+
+  /* ASSUMPTIONS */
+  .assump{margin-top:32px;background:var(--surface);border:1px solid var(--border);
+    border-radius:14px;padding:24px}
+  .assump h3{font-size:.58rem;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:14px}
+  .assump ul{list-style:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:7px}
+  .assump li{font-size:.76rem;color:#64748b;padding-left:14px;position:relative;line-height:1.5}
+  .assump li::before{content:'—';position:absolute;left:0;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <div class="eyebrow">Pharmaceutical Manufacturing</div>
+  <h1>COGS</h1>
+  <div class="subtitle">Fill/Finish cost calculator — glass vial injectable · cost per dose &amp; per year</div>
+</header>
+
+<!-- GLOBAL TOGGLES -->
+<div class="toggle-bar">
+  <label class="tog">
+    <input type="checkbox" id="tg-capex" checked onchange="calc()">
+    <div><div class="tog-label">Include CAPEX</div><div class="tog-sub">Uncheck if 3rd-party funds facility &amp; line</div></div>
+  </label>
+  <div class="util-bar">
+    <label for="lineUtil">Line Utilization</label>
+    <input type="range" id="lineUtil" min="5" max="100" value="100" step="5" oninput="document.getElementById('utilVal').textContent=this.value+'%';calc()">
+    <span class="util-val" id="utilVal">100%</span>
+    <span style="font-size:.68rem;color:var(--muted)">% of fixed costs borne by this product</span>
+  </div>
+  <div class="margin-bar">
+    <label for="margin">Profit Margin</label>
+    <input type="number" id="margin" value="20" min="0" max="90" step="1" oninput="calc()">
+    <span style="font-size:.78rem;color:var(--muted)">%</span>
+  </div>
+</div>
+
+<div class="layout">
+<!-- ═══ LEFT COLUMN — INPUTS ═══ -->
+<div>
+
+  <div class="ig">
+    <div class="ig-title">Product &amp; API</div>
+    <div class="fg">
+      <div class="f"><label>API Cost ($/g)</label>
+        <input type="number" id="apiCost" value="200" min="0.01" step="0.01" oninput="calc()">
+        <div class="f-note">Cost of drug substance per gram</div></div>
+      <div class="f"><label>Bulk Concentration (mg/mL)</label>
+        <input type="number" id="conc" value="5" min="0.001" step="0.001" oninput="calc()">
+        <div class="f-note">Drug substance in bulk solution</div></div>
+      <div class="f"><label>Nominal Fill Volume (mL)</label>
+        <input type="number" id="fillVol" value="2" min="0.1" step="0.1" oninput="calc()">
+        <div class="f-note">Labeled fill per vial</div></div>
+      <div class="f"><label>Overfill % (withdrawable loss)</label>
+        <input type="number" id="overfill" value="15" min="0" max="40" step="0.5" oninput="calc()">
+        <div class="f-note">Extra fill to ensure full dose withdrawal (~10–20%)</div></div>
+      <div class="f"><label>Doses per Vial</label>
+        <input type="number" id="dosesPerVial" value="1" min="1" max="20" step="1" oninput="calc()">
+        <div class="f-note">1 for single-dose; multi-dose vials</div></div>
+      <div class="f"><label>Annual Doses Required</label>
+        <input type="number" id="annualDoses" value="1000000" min="1000" step="1000" oninput="calc()">
+        <div class="f-note">Target commercial demand</div></div>
+    </div>
+  </div>
+
+  <div class="ig">
+    <div class="ig-title">Process Performance</div>
+    <div class="fg">
+      <div class="f"><label>Fill Line Speed (vials/hr, rated)</label>
+        <select id="fillSpeed" onchange="calc()">
+          <option value="1500">1,500 — benchtop/manual</option>
+          <option value="3000">3,000 — semi-automatic</option>
+          <option value="6000" selected>6,000 — small automatic</option>
+          <option value="12000">12,000 — mid-speed</option>
+          <option value="24000">24,000 — high speed</option>
+          <option value="36000">36,000 — very high speed</option>
+        </select></div>
+      <div class="f"><label>Line Efficiency / OEE (%)</label>
+        <input type="number" id="oee" value="85" min="30" max="99" step="1" oninput="calc()">
+        <div class="f-note">Actual vs rated speed (minor stops, jams)</div></div>
+      <div class="f"><label>Bulk Batch Size (L)</label>
+        <input type="number" id="batchL" value="50" min="1" step="1" oninput="calc()">
+        <div class="f-note">Volume of bulk drug product per batch</div></div>
+      <div class="f"><label>In-Process Batch Yield (%)</label>
+        <input type="number" id="batchYield" value="95" min="50" max="100" step="0.1" oninput="calc()">
+        <div class="f-note">Vials passing IPC &amp; visual inspection</div></div>
+      <div class="f"><label>Batch Release Rate (%)</label>
+        <input type="number" id="releaseRate" value="97" min="50" max="100" step="0.1" oninput="calc()">
+        <div class="f-note">% of batches that pass final QC release</div></div>
+      <div class="f"><label>Changeover Time per Batch (hr)</label>
+        <input type="number" id="changeover" value="10" min="1" step="0.5" oninput="calc()">
+        <div class="f-note">Cleaning, sterilization, setup &amp; teardown</div></div>
+      <div class="f"><label>Production Days / Year</label>
+        <input type="number" id="prodDays" value="240" min="1" max="330" step="1" oninput="calc()"></div>
+      <div class="f"><label>Shifts / Day</label>
+        <select id="shifts" onchange="calc()">
+          <option value="1">1 shift</option>
+          <option value="2" selected>2 shifts</option>
+          <option value="3">3 shifts (24 hr)</option>
+        </select></div>
+      <div class="f"><label>Hours / Shift</label>
+        <input type="number" id="hrsShift" value="8" min="4" max="12" step="0.5" oninput="calc()"></div>
+    </div>
+  </div>
+
+  <div class="ig">
+    <div class="ig-title">Facility &amp; Equipment CAPEX <span style="font-size:.62rem;color:var(--muted);font-weight:400;margin-left:8px">(zeroed when CAPEX toggle is off)</span></div>
+    <div class="fg">
+      <div class="f"><label>Facility CAPEX ($M)</label>
+        <input type="number" id="facilCapex" value="25" min="0" step="0.5" oninput="calc()">
+        <div class="f-note">Cleanroom construction, HVAC, WFI system, utilities</div></div>
+      <div class="f"><label>Facility Useful Life (yr)</label>
+        <input type="number" id="facilLife" value="25" min="5" max="40" step="1" oninput="calc()"></div>
+      <div class="f"><label>Line / Equipment CAPEX ($M)</label>
+        <input type="number" id="lineCapex" value="12" min="0" step="0.5" oninput="calc()">
+        <div class="f-note">Filler, capper, isolator/RABS, inspection, lyophilizer if applicable</div></div>
+      <div class="f"><label>Equipment Useful Life (yr)</label>
+        <input type="number" id="equipLife" value="12" min="3" max="25" step="1" oninput="calc()"></div>
+    </div>
+  </div>
+
+</div>
+<!-- ═══ RIGHT COLUMN — INPUTS ═══ -->
+<div>
+
+  <div class="ig">
+    <div class="ig-title">Facility &amp; Line OPEX</div>
+    <div class="fg">
+      <div class="f"><label>Facility Maintenance (% of CAPEX/yr)</label>
+        <input type="number" id="facilMaint" value="2" min="0" max="10" step="0.1" oninput="calc()">
+        <div class="f-note">Calibration, cleaning validation, building maintenance</div></div>
+      <div class="f"><label>Equipment Maintenance (% of CAPEX/yr)</label>
+        <input type="number" id="equipMaint" value="10" min="0" max="20" step="0.5" oninput="calc()">
+        <div class="f-note">Preventive maintenance, spare parts, qualification</div></div>
+      <div class="f"><label>Utilities ($/yr)</label>
+        <input type="number" id="utilities" value="1200000" min="0" step="10000" oninput="calc()">
+        <div class="f-note">WFI, clean steam, nitrogen, compressed air, electricity, HVAC</div></div>
+      <div class="f"><label>QC / Testing Cost per Batch ($)</label>
+        <input type="number" id="qcBatch" value="35000" min="0" step="500" oninput="calc()">
+        <div class="f-note">Sterility, potency, endotoxin, particulates, stability pull</div></div>
+      <div class="f"><label>Regulatory / Compliance ($/yr)</label>
+        <input type="number" id="regulatory" value="400000" min="0" step="10000" oninput="calc()">
+        <div class="f-note">FDA fees, inspections, dossier maintenance, GMP audits</div></div>
+    </div>
+  </div>
+
+  <div class="ig">
+    <div class="ig-title">Labor</div>
+    <div class="fg">
+      <div class="f"><label>Direct Labor FTE on Line</label>
+        <input type="number" id="directFTE" value="5" min="0" max="50" step="1" oninput="calc()">
+        <div class="f-note">Operators present per shift during production</div></div>
+      <div class="f"><label>Direct Loaded Rate ($/hr)</label>
+        <input type="number" id="directRate" value="45" min="0" step="1" oninput="calc()">
+        <div class="f-note">Includes benefits, payroll tax (~1.3× base wage)</div></div>
+      <div class="f"><label>Indirect / Support FTE</label>
+        <input type="number" id="indirectFTE" value="7" min="0" max="50" step="1" oninput="calc()">
+        <div class="f-note">QA, QC analysts, supervisors, maintenance techs</div></div>
+      <div class="f"><label>Indirect Loaded Rate ($/hr)</label>
+        <input type="number" id="indirectRate" value="65" min="0" step="1" oninput="calc()">
+        <div class="f-note">Higher skilled / specialized roles</div></div>
+    </div>
+  </div>
+
+  <div class="ig">
+    <div class="ig-title">Materials &amp; Consumables (per vial / per batch)</div>
+    <div class="fg">
+      <div class="f"><label>Vial Cost ($/vial)</label>
+        <input type="number" id="vialCost" value="0.45" min="0" step="0.01" oninput="calc()"></div>
+      <div class="f"><label>Stopper Cost ($/vial)</label>
+        <input type="number" id="stopperCost" value="0.25" min="0" step="0.01" oninput="calc()"></div>
+      <div class="f"><label>Crimp Cap ($/vial)</label>
+        <input type="number" id="capCost" value="0.08" min="0" step="0.01" oninput="calc()"></div>
+      <div class="f"><label>Excipients / Buffer ($/L bulk)</label>
+        <input type="number" id="excipCost" value="3" min="0" step="0.1" oninput="calc()">
+        <div class="f-note">Formulation buffers, sugars, surfactants</div></div>
+      <div class="f"><label>Batch Consumables ($/batch)</label>
+        <input type="number" id="consumBatch" value="12000" min="0" step="100" oninput="calc()">
+        <div class="f-note">Filters, tubing, single-use bags, needles, gaskets</div></div>
+    </div>
+  </div>
+
+  <div class="ig">
+    <div class="ig-title">Packaging &amp; Labeling (per released vial)</div>
+    <div class="fg">
+      <div class="f"><label>Unit Carton ($/vial)</label>
+        <input type="number" id="cartonCost" value="0.35" min="0" step="0.01" oninput="calc()"></div>
+      <div class="f"><label>Label ($/vial)</label>
+        <input type="number" id="labelCost" value="0.12" min="0" step="0.01" oninput="calc()"></div>
+      <div class="f"><label>Package Insert ($/vial)</label>
+        <input type="number" id="insertCost" value="0.08" min="0" step="0.01" oninput="calc()"></div>
+    </div>
+  </div>
+
+</div>
+</div><!-- /layout -->
+
+<!-- ═══ PRODUCTION SUMMARY ═══ -->
+<div style="margin-top:24px">
+<div class="section-title">Production Schedule Analysis</div>
+<div class="prod-summary">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:0">
+    <div class="ps-section">
+      <div class="ps-title" style="margin-bottom:8px">Per Batch</div>
+      <div class="ps-row"><span class="ps-lbl">Vials per batch (theoretical)</span><span class="ps-val" id="p-vpb">—</span></div>
+      <div class="ps-row"><span class="ps-lbl">Fill runtime</span><span class="ps-val" id="p-runtime">—</span></div>
+      <div class="ps-row"><span class="ps-lbl">Changeover + clean</span><span class="ps-val" id="p-co">—</span></div>
+      <div class="ps-row"><span class="ps-lbl">Total cycle time</span><span class="ps-val" id="p-cycle">—</span></div>
+      <div class="ps-row"><span class="ps-lbl">Vials released per batch (net)</span><span class="ps-val" id="p-relVPB">—</span></div>
+      <div class="ps-row"><span class="ps-lbl">Doses released per batch</span><span class="ps-val" id="p-doseVPB">—</span></div>
+      <div class="ps-row"><span class="ps-lbl">API used per batch (g)</span><span class="ps-val" id="p-apiBatch">—</span></div>
+    </div>
+    <div class="ps-section">
+      <div class="ps-title" style="margin-bottom:8px">Annual Schedule</div>
+      <div class="ps-row"><span class="ps-lbl">Available hours / year</span><span class="ps-val" id="p-availHrs">—</span></div>
+      <div class="ps-row"><span class="ps-lbl">Max batches / year (capacity)</span><span class="ps-val" id="p-maxBatch">—</span></div>
+      <div class="ps-row"><span class="ps-lbl">Batches needed to meet demand</span><span class="ps-val" id="p-needed">—</span></div>
+      <div class="ps-row"><span class="ps-lbl">Batches actually run</span><span class="ps-val" id="p-run">—</span></div>
+      <div class="ps-row"><span class="ps-lbl">Line utilization (schedule)</span><span class="ps-val" id="p-schedUtil">—</span></div>
+      <div class="ps-row"><span class="ps-lbl">Theoretical doses produced</span><span class="ps-val" id="p-theorDose">—</span></div>
+      <div class="ps-row"><span class="ps-lbl">Released doses (after yield losses)</span><span class="ps-val" id="p-relDose">—</span></div>
+    </div>
+  </div>
+  <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:24px;flex-wrap:wrap">
+    <div><span style="font-size:.68rem;color:var(--muted)">Blended yield loss</span><br><span style="font-size:1.1rem;font-weight:700" id="p-yieldLoss">—</span></div>
+    <div><span style="font-size:.68rem;color:var(--muted)">Capacity headroom</span><br><span style="font-size:1.1rem;font-weight:700" id="p-headroom">—</span></div>
+    <div><span style="font-size:.68rem;color:var(--muted)">API cost / dose</span><br><span style="font-size:1.1rem;font-weight:700" id="p-apiDose">—</span></div>
+    <div><span style="font-size:.68rem;color:var(--muted)">Capacity status</span><br><span style="font-size:1.1rem;font-weight:700" id="p-status">—</span></div>
+  </div>
+</div>
+</div>
+
+<!-- ═══ COST SUMMARY CARDS ═══ -->
+<div style="margin-top:24px">
+<div class="section-title">Cost Output</div>
+<div class="cost-cards">
+  <div class="cc"><div class="cc-lbl">Total Annual COGS</div><div class="cc-val cc-accent" id="cc-total">—</div><div class="cc-sub">materials + overhead + margin</div></div>
+  <div class="cc"><div class="cc-lbl">Cost per Dose (w/ margin)</div><div class="cc-val cc-green" id="cc-cpd">—</div><div class="cc-sub" id="cc-cpd-sub">—</div></div>
+  <div class="cc"><div class="cc-lbl">Cost per Dose (ex-margin)</div><div class="cc-val cc-amber" id="cc-cpd-ex">—</div><div class="cc-sub">manufacturing cost floor</div></div>
+</div>
+
+<!-- ═══ BREAKDOWN TABLE ═══ -->
+<table class="bt">
+  <thead><tr>
+    <th style="width:44%">Cost Category</th>
+    <th style="width:16%">$/Year</th>
+    <th style="width:13%">$/Dose</th>
+    <th style="width:10%">% of Total</th>
+    <th style="width:17%">Share</th>
+  </tr></thead>
+  <tbody id="bt-body"></tbody>
+</table>
+</div>
+
+<!-- ASSUMPTIONS -->
+<div class="assump">
+  <h3>Model Assumptions &amp; Scope</h3>
+  <ul>
+    <li>All costs are annualized for the production volume specified</li>
+    <li>Fill volume with overfill = nominal fill × (1 + overfill%). WFI system provides sterile water for reconstitution if needed</li>
+    <li>In-process yield: vials rejected at IPC checkpoints (weight, cosmetic, particulate). Batch yield applied at vial level</li>
+    <li>Release rate: entire batches that fail final QC (sterility, potency, endotoxin). Applied at batch level</li>
+    <li>Blended yield loss = 1 − (batchYield% × releaseRate%). Both levels modeled simultaneously</li>
+    <li>Fill runtime = vialsPerBatch ÷ (ratedSpeed × OEE%). OEE captures availability, performance, and minor stops</li>
+    <li>Changeover includes line clearance, CIP/SIP, depyrogenation tunnel, component staging, setup qualification</li>
+    <li>Line utilization % applies to: Facility CAPEX, Line CAPEX, Facility OPEX (maintenance + regulatory), Line OPEX (utilities + maintenance). Does NOT reduce QC-per-batch, direct/indirect labor, materials, or packaging</li>
+    <li>CAPEX annualized via straight-line depreciation. No residual value assumed</li>
+    <li>Direct labor: FTE × prodDays × shifts × hrs/shift × rate × lineUtil%. Operators follow the shared facility schedule</li>
+    <li>Indirect labor: FTE × 2,080 hr/yr × rate × lineUtil%. Support staff partially shared with other products</li>
+    <li>Yield Loss = rejected vials × (API + component cost/vial). Excipients and consumables are sunk per batch → in Materials</li>
+    <li>Materials &amp; Consumables covers released product API + components, all excipients, all batch consumables</li>
+    <li>Packaging &amp; Labeling applied only to released (saleable) vials</li>
+    <li>3rd-party CAPEX toggle: when OFF, Facility CAPEX and Line CAPEX = $0. All OPEX still applies</li>
+    <li>Profit margin applied as: total cost ÷ (1 − margin%). Margin shown as a cost line for transparency</li>
+    <li>Isolator/RABS, lyophilizer, auto-inspection system should be included in Line CAPEX if applicable</li>
+    <li>Cold-chain packaging, distribution, and post-market surveillance not included</li>
+  </ul>
+</div>
+
+</div><!-- /container -->
+
+<script>
+var CAT_COLORS = ['#4f8ef7','#4f8ef7','#38bdf8','#38bdf8','#a78bfa','#a78bfa','#f59e0b','#10b981','#34d399'];
+
+function fmt(n,dec){
+  if(n===undefined||n===null||isNaN(n))return'—';
+  dec=dec||0;
+  return'$'+n.toFixed(dec).replace(/\B(?=(\d{3})+(?!\d))/g,',');
+}
+function fmtN(n,dec){
+  if(isNaN(n))return'—';
+  return n.toFixed(dec||0).replace(/\B(?=(\d{3})+(?!\d))/g,',');
+}
+
+function calc(){
+  // ── READ INPUTS ──
+  var apiG      = +document.getElementById('apiCost').value      || 0;
+  var conc      = +document.getElementById('conc').value         || 0;
+  var fillV     = +document.getElementById('fillVol').value      || 0;
+  var overfill  = +document.getElementById('overfill').value     || 0;
+  var dpv       = +document.getElementById('dosesPerVial').value || 1;
+  var demDoses  = +document.getElementById('annualDoses').value  || 0;
+
+  var spd       = +document.getElementById('fillSpeed').value    || 6000;
+  var oee       = +document.getElementById('oee').value         || 85;
+  var batchL    = +document.getElementById('batchL').value      || 0;
+  var byPct     = +document.getElementById('batchYield').value  || 95;
+  var rrPct     = +document.getElementById('releaseRate').value || 97;
+  var coHrs     = +document.getElementById('changeover').value  || 0;
+  var pDays     = +document.getElementById('prodDays').value    || 240;
+  var shifts    = +document.getElementById('shifts').value      || 2;
+  var hps       = +document.getElementById('hrsShift').value    || 8;
+
+  var inclCapex = document.getElementById('tg-capex').checked;
+  var util      = +document.getElementById('lineUtil').value    || 100;
+  var marginPct = +document.getElementById('margin').value      || 0;
+
+  var facCapM   = +document.getElementById('facilCapex').value  || 0;
+  var facLife   = +document.getElementById('facilLife').value   || 25;
+  var lnCapM    = +document.getElementById('lineCapex').value   || 0;
+  var eqLife    = +document.getElementById('equipLife').value   || 12;
+
+  var facMaintP = +document.getElementById('facilMaint').value  || 2;
+  var eqMaintP  = +document.getElementById('equipMaint').value  || 10;
+  var utilAnn   = +document.getElementById('utilities').value   || 0;
+  var qcBatch   = +document.getElementById('qcBatch').value     || 0;
+  var regAnn    = +document.getElementById('regulatory').value  || 0;
+
+  var dFTE      = +document.getElementById('directFTE').value   || 0;
+  var dRate     = +document.getElementById('directRate').value  || 0;
+  var iFTE      = +document.getElementById('indirectFTE').value || 0;
+  var iRate     = +document.getElementById('indirectRate').value|| 0;
+
+  var vialC     = +document.getElementById('vialCost').value    || 0;
+  var stopC     = +document.getElementById('stopperCost').value || 0;
+  var capC      = +document.getElementById('capCost').value     || 0;
+  var excipL    = +document.getElementById('excipCost').value   || 0;
+  var consumB   = +document.getElementById('consumBatch').value || 0;
+
+  var cartonC   = +document.getElementById('cartonCost').value  || 0;
+  var labelC    = +document.getElementById('labelCost').value   || 0;
+  var insertC   = +document.getElementById('insertCost').value  || 0;
+
+  if(!fillV||!conc||!batchL||!demDoses)return;
+
+  // ── PRODUCTION CALCULATIONS ──
+  var fillVact   = fillV * (1 + overfill/100);           // mL per vial with overfill
+  var vialsPerB  = Math.floor((batchL*1000)/fillVact);   // theoretical vials per batch
+  var runtimeHrs = vialsPerB / (spd * oee/100);         // fill runtime hours
+  var cycleHrs   = runtimeHrs + coHrs;                  // total batch time
+
+  var availHrs   = pDays * shifts * hps;                // hours/year available
+  var maxBatches = Math.floor(availHrs / cycleHrs);     // capacity ceiling
+
+  // Net doses per batch after IPC yield AND batch release probability
+  var by = byPct/100, rr = rrPct/100;
+  var dosesPerBatch = vialsPerB * by * rr * dpv;        // expected released doses per batch started
+  var batchesNeeded = Math.ceil(demDoses / dosesPerBatch);
+  var batchesRun    = Math.min(batchesNeeded, maxBatches);
+
+  var totalVialsRun   = batchesRun * vialsPerB;
+  var releasedVials   = totalVialsRun * by * rr;
+  var rejectedVials   = totalVialsRun - releasedVials;
+  var dosesReleased   = releasedVials * dpv;
+  var dosesTheoretical= totalVialsRun * dpv;
+  var yieldLossPct    = (1 - by*rr)*100;
+  var schedUtilPct    = (batchesRun / maxBatches)*100;
+  var headroomBatches = maxBatches - batchesRun;
+
+  // Per-vial costs
+  var apiPerVial  = fillVact * conc * (apiG/1000);      // $ API per vial filled (incl overfill)
+  var compPerVial = vialC + stopC + capC;               // $ components per vial
+  var excipPerB   = batchL * excipL;                    // $ excipients per batch (bulk)
+  var excipPerV   = excipPerB / vialsPerB;
+
+  var apiCostPerDose = (fillV * conc * apiG/1000) / dpv; // API at nominal fill (labeled dose)
+
+  // ── COST CALCULATIONS ──
+  var u = util/100; // utilization fraction for fixed costs
+
+  // 1. Facility CAPEX (annualized, straight-line)
+  var facCapex = inclCapex ? (facCapM*1e6/facLife)*u : 0;
+
+  // 2. Line CAPEX (annualized)
+  var lnCapex  = inclCapex ? (lnCapM*1e6/eqLife)*u : 0;
+
+  // 3. Facility OPEX (maintenance + regulatory) × utilization
+  var facOpex  = (facCapM*1e6 * facMaintP/100 + regAnn) * u;
+
+  // 4. Line OPEX (equipment maintenance + utilities) × util, plus per-batch QC (100%)
+  var lnOpex   = (lnCapM*1e6 * eqMaintP/100 + utilAnn)*u + qcBatch*batchesRun;
+
+  // 5. Direct Labor — operators on shift × full year × util
+  var dirLabor = dFTE * pDays * shifts * hps * dRate * u;
+
+  // 6. Indirect Labor — support staff × annual hours × util
+  var indLabor = iFTE * 2080 * iRate * u;
+
+  // 7. Yield Loss — cost of rejected/failed vials (API + components)
+  var yieldLoss= rejectedVials * (apiPerVial + compPerVial);
+
+  // 8. Materials & Consumables — released product API + components, all excipients, all consumables
+  var matAPI   = releasedVials * apiPerVial;
+  var matComp  = releasedVials * compPerVial;
+  var matExcip = batchesRun * excipPerB;
+  var matConsum= batchesRun * consumB;
+  var matTotal = matAPI + matComp + matExcip + matConsum;
+
+  // 9. Packaging & Labeling — released vials only
+  var pkgLabel = releasedVials * (cartonC + labelC + insertC);
+
+  var subtotal = facCapex+lnCapex+facOpex+lnOpex+dirLabor+indLabor+yieldLoss+matTotal+pkgLabel;
+  var marginAmt= subtotal * (marginPct/100) / (1 - marginPct/100);
+  var grandTotal= subtotal + marginAmt;
+
+  var cpd_ex   = dosesReleased>0 ? subtotal/dosesReleased : 0;
+  var cpd_in   = dosesReleased>0 ? grandTotal/dosesReleased : 0;
+
+  // ── UPDATE PRODUCTION SUMMARY ──
+  var set = function(id,v){document.getElementById(id).textContent=v};
+
+  set('p-vpb',    fmtN(vialsPerB)+' vials');
+  set('p-runtime',runtimeHrs.toFixed(1)+' hr');
+  set('p-co',     coHrs.toFixed(1)+' hr');
+  set('p-cycle',  cycleHrs.toFixed(1)+' hr');
+  set('p-relVPB', fmtN(vialsPerB*by*rr)+' vials');
+  set('p-doseVPB',fmtN(dosesPerBatch)+' doses');
+  set('p-apiBatch',fmtN(vialsPerB*fillVact*conc/1000,1)+' g');
+  set('p-availHrs',fmtN(availHrs)+' hr');
+  set('p-maxBatch',fmtN(maxBatches)+' batches');
+
+  var nEl=document.getElementById('p-needed');
+  nEl.textContent=fmtN(batchesNeeded)+' batches';
+  nEl.className='ps-val'+(batchesNeeded>maxBatches?' warn':'');
+
+  set('p-run',    fmtN(batchesRun)+' batches');
+  set('p-schedUtil',schedUtilPct.toFixed(1)+'%');
+  set('p-theorDose',fmtN(dosesTheoretical));
+  set('p-relDose', fmtN(dosesReleased));
+
+  var ylEl=document.getElementById('p-yieldLoss');
+  ylEl.textContent=yieldLossPct.toFixed(1)+'%';
+  ylEl.className=yieldLossPct>10?'amber':yieldLossPct>5?'amber':'ok';
+
+  var hrEl=document.getElementById('p-headroom');
+  hrEl.textContent=headroomBatches>0?'+'+fmtN(headroomBatches)+' batches':'0';
+  hrEl.className=headroomBatches<=0?'warn':'ok';
+
+  set('p-apiDose',fmt(apiCostPerDose,2)+'/dose');
+
+  var stEl=document.getElementById('p-status');
+  if(batchesNeeded>maxBatches){stEl.textContent='⚠ CAPACITY SHORTFALL';stEl.className='warn'}
+  else if(schedUtilPct>85){stEl.textContent='● HIGH UTILIZATION';stEl.className='amber'}
+  else{stEl.textContent='✓ SUFFICIENT';stEl.className='ok'}
+
+  // ── UPDATE COST CARDS ──
+  document.getElementById('cc-total').textContent=fmt(grandTotal);
+  document.getElementById('cc-cpd').textContent=fmt(cpd_in,2);
+  document.getElementById('cc-cpd-sub').textContent=fmt(cpd_ex,2)+'/dose ex-margin · '+marginPct+'% margin';
+  document.getElementById('cc-cpd-ex').textContent=fmt(cpd_ex,2);
+
+  // ── BUILD BREAKDOWN TABLE ──
+  var rows=[
+    {name:'Facility CAPEX',
+     note:'Cleanroom, HVAC, WFI system, utility infrastructure — annualized. '+(inclCapex?'':'3rd-party funded — excluded.'),
+     yr:facCapex,disabled:!inclCapex},
+    {name:'Line / Equipment CAPEX',
+     note:'Filling line, isolator/RABS, auto-inspection, lyophilizer (if applicable) — annualized. '+(inclCapex?'':'3rd-party funded — excluded.'),
+     yr:lnCapex,disabled:!inclCapex},
+    {name:'Facility OPEX',
+     note:'Building maintenance '+facMaintP+'% × $'+facCapM+'M + regulatory/compliance $'+fmtN(regAnn)+'/yr. Scaled by '+util+'% line utilization.',
+     yr:facOpex},
+    {name:'Line OPEX',
+     note:'Equipment maintenance '+eqMaintP+'% × $'+lnCapM+'M + utilities $'+fmtN(utilAnn)+'/yr (scaled '+util+'%) + QC testing $'+fmtN(qcBatch)+'/batch × '+batchesRun+' batches (100%).',
+     yr:lnOpex},
+    {name:'Direct Labor',
+     note:dFTE+' FTE operators × '+pDays+' days × '+shifts+' shifts × '+hps+' hrs/shift × $'+dRate+'/hr. Scaled by '+util+'% utilization.',
+     yr:dirLabor},
+    {name:'Indirect Labor',
+     note:iFTE+' FTE (QA, QC, supervisors, maintenance) × 2,080 hr/yr × $'+iRate+'/hr. Scaled by '+util+'% utilization.',
+     yr:indLabor},
+    {name:'Yield Loss',
+     note:fmtN(rejectedVials)+' rejected vials × (API $'+apiPerVial.toFixed(2)+' + components $'+compPerVial.toFixed(2)+')/vial. IPC yield '+byPct+'% × release rate '+rrPct+'% = '+yieldLossPct.toFixed(1)+'% total loss.',
+     yr:yieldLoss},
+    {name:'Materials & Consumables',
+     note:'API for '+fmtN(releasedVials)+' released vials ($'+fmt(matAPI)+') + components ($'+fmt(matComp)+') + excipients all batches ($'+fmt(matExcip)+') + batch consumables ($'+fmt(matConsum)+').',
+     yr:matTotal},
+    {name:'Packaging & Labeling',
+     note:'Carton $'+cartonC+' + label $'+labelC+' + insert $'+insertC+' = $'+(cartonC+labelC+insertC).toFixed(2)+'/vial × '+fmtN(releasedVials)+' released vials.',
+     yr:pkgLabel},
+  ];
+
+  var html='';
+  rows.forEach(function(r,i){
+    var pct=grandTotal>0?r.yr/grandTotal*100:0;
+    var cpd_r=dosesReleased>0?r.yr/dosesReleased:0;
+    var barW=Math.min(100,pct*3.5);
+    var col=CAT_COLORS[i]||'#4f8ef7';
+    html+='<tr'+(r.disabled?' class="disabled-row"':'')+'>'
+      +'<td><div class="cat-name">'+r.name+'</div><div class="cat-note">'+r.note+'</div>'
+      +'<div class="cat-bar-wrap"><div class="cat-bar" style="width:'+barW+'%;background:'+col+'"></div></div></td>'
+      +'<td><span class="num-hi">'+fmt(r.yr)+'</span></td>'
+      +'<td><span class="num">'+fmt(cpd_r,4)+'</span></td>'
+      +'<td><span class="num">'+pct.toFixed(1)+'%</span></td>'
+      +'<td><div style="height:6px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden">'
+      +'<div style="height:100%;width:'+Math.min(100,pct*3.5)+'%;background:'+col+';border-radius:3px"></div></div></td>'
+      +'</tr>';
+  });
+  html+='<tr class="subtotal-row"><td colspan="2"><div class="cat-name">Subtotal (ex-margin)</div></td>'
+    +'<td><span class="num-hi">'+fmt(cpd_ex,4)+'</span></td><td></td><td></td></tr>';
+  html+='<tr class="margin-row"><td>'
+    +'<div class="cat-name">Manufacturer Profit Margin ('+marginPct+'%)</div>'
+    +'<div class="cat-note">Applied as: subtotal ÷ (1 − '+marginPct+'%) − subtotal</div></td>'
+    +'<td><span class="num-hi">'+fmt(marginAmt)+'</span></td>'
+    +'<td><span class="num">'+fmt(dosesReleased>0?marginAmt/dosesReleased:0,4)+'</span></td>'
+    +'<td><span class="num">'+(grandTotal>0?marginAmt/grandTotal*100:0).toFixed(1)+'%</span></td><td></td></tr>';
+  html+='<tr class="total-row"><td>Total COGS (Annual)</td>'
+    +'<td>'+fmt(grandTotal)+'</td>'
+    +'<td>'+fmt(cpd_in,4)+' /dose</td>'
+    +'<td>100%</td><td></td></tr>';
+
+  document.getElementById('bt-body').innerHTML=html;
+}
+
+calc();
+</script>
+</body>
+</html>

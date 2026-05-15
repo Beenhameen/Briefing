@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Bid — Barndominium Cost Estimator</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap">
+<style>
+  :root {
+    --bg: #07090f; --surface: #0e1420; --border: rgba(255,255,255,0.06);
+    --accent: #4f8ef7; --green: #10b981; --red: #ef4444; --amber: #f59e0b;
+    --text: #e2e8f0; --muted: #475569;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Inter', -apple-system, sans-serif; font-size: 16px; min-height: 100vh;
+  }
+  body::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background: radial-gradient(ellipse at 15% 10%, rgba(79,142,247,0.07) 0%, transparent 45%),
+                radial-gradient(ellipse at 85% 85%, rgba(16,185,129,0.05) 0%, transparent 45%);
+  }
+  .container { max-width: 1160px; margin: 0 auto; padding: 56px 28px 80px; position: relative; z-index: 1; }
+
+  header { margin-bottom: 48px; }
+  .eyebrow {
+    font-size: 0.65rem; letter-spacing: 4px; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 16px; display: flex; align-items: center; gap: 10px;
+  }
+  .eyebrow::before { content: ''; display: inline-block; width: 24px; height: 1px; background: var(--accent); }
+  h1 {
+    font-size: clamp(2rem, 5vw, 3rem); font-weight: 700; letter-spacing: -1.5px;
+    background: linear-gradient(135deg, #fff 0%, rgba(255,255,255,0.45) 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    line-height: 1.05; margin-bottom: 10px;
+  }
+  .subtitle { color: var(--muted); font-size: 0.9rem; }
+
+  /* LAYOUT */
+  .layout { display: grid; grid-template-columns: 1fr 340px; gap: 24px; align-items: start; }
+  @media (max-width: 880px) { .layout { grid-template-columns: 1fr; } }
+
+  /* INPUT PANEL */
+  .input-panel { display: flex; flex-direction: column; gap: 18px; }
+  .input-group {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 24px;
+  }
+  .group-title {
+    font-size: 0.6rem; letter-spacing: 3px; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 18px; display: flex; align-items: center; gap: 12px;
+  }
+  .group-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+  .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 14px; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 0.72rem; color: var(--muted); letter-spacing: 0.5px; }
+  .field input, .field select {
+    background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+    border-radius: 10px; color: var(--text); font-family: inherit; font-size: 0.9rem;
+    padding: 10px 14px; width: 100%; transition: border-color 0.15s; -webkit-appearance: none;
+  }
+  .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+  .field-note { font-size: 0.68rem; color: var(--muted); line-height: 1.4; }
+  .field-check { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; padding-top: 4px; }
+  .field-check input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent); margin-top: 2px; flex-shrink: 0; }
+  .field-check span { font-size: 0.84rem; color: #94a3b8; line-height: 1.5; }
+
+  /* SUMMARY PANEL */
+  .summary-panel { position: sticky; top: 24px; display: flex; flex-direction: column; gap: 16px; }
+  .summary-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 24px; }
+  .summary-label { font-size: 0.6rem; letter-spacing: 3px; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  .summary-total { font-size: 2.3rem; font-weight: 700; letter-spacing: -1px; color: var(--accent); font-variant-numeric: tabular-nums; line-height: 1; margin-bottom: 4px; }
+  .summary-range { font-size: 0.75rem; color: var(--muted); margin-bottom: 18px; line-height: 1.4; }
+  .summary-stat { display: flex; justify-content: space-between; padding: 9px 0; border-top: 1px solid var(--border); font-size: 0.83rem; gap: 10px; }
+  .summary-stat .lbl { color: var(--muted); }
+  .summary-stat .val { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; text-align: right; }
+  .per-sqft-box { background: rgba(79,142,247,0.08); border: 1px solid rgba(79,142,247,0.2); border-radius: 12px; padding: 16px; text-align: center; }
+  .per-sqft-box .big { font-size: 1.7rem; font-weight: 700; color: var(--accent); }
+  .per-sqft-box .sm { font-size: 0.72rem; color: var(--muted); margin-top: 4px; }
+  .labor-callout { font-size: 0.76rem; color: #64748b; line-height: 1.65; padding: 0 2px; }
+  .labor-callout strong { color: #94a3b8; }
+
+  /* BREAKDOWN */
+  .breakdown { margin-top: 36px; }
+  .section-title {
+    font-size: 0.6rem; letter-spacing: 3.5px; text-transform: uppercase; color: var(--muted);
+    margin-bottom: 20px; display: flex; align-items: center; gap: 14px;
+  }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+  .bd-table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
+  .bd-table th {
+    text-align: left; font-size: 0.6rem; letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--muted); padding: 0 16px 12px; border-bottom: 1px solid var(--border);
+  }
+  .bd-table th:not(:first-child) { text-align: right; }
+  .bd-table td { padding: 13px 16px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .bd-table td:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .bd-table tr:last-child td { border-bottom: none; }
+  .bd-table tbody tr:hover td { background: var(--surface); }
+  .cat-name { color: var(--text); font-weight: 500; margin-bottom: 3px; }
+  .cat-note { font-size: 0.74rem; color: #64748b; line-height: 1.45; }
+  .cat-basis { color: var(--muted); font-size: 0.76rem; }
+  .cat-cost { color: var(--text); font-weight: 600; }
+  .cat-zero { color: var(--muted); font-weight: 400; }
+  .subtotal-row td { border-top: 2px solid var(--border); padding-top: 16px; font-weight: 600; }
+  .contingency-row td { color: var(--amber); }
+  .total-row td { border-top: 2px solid var(--accent); font-size: 1.05rem; font-weight: 700; color: var(--accent); padding-top: 16px; border-bottom: none; }
+
+  /* ASSUMPTIONS */
+  .assumptions { margin-top: 40px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 28px; }
+  .assumptions h3 { font-size: 0.6rem; letter-spacing: 3px; text-transform: uppercase; color: var(--muted); margin-bottom: 16px; }
+  .assumptions ul { list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 8px; }
+  .assumptions li { font-size: 0.79rem; color: #64748b; padding-left: 16px; position: relative; line-height: 1.55; }
+  .assumptions li::before { content: '—'; position: absolute; left: 0; color: var(--muted); }
+  .warn-box { margin-top: 22px; padding: 16px 20px; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); border-radius: 10px; font-size: 0.81rem; color: #fbbf24; line-height: 1.65; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="eyebrow">Barndominium Estimator</div>
+    <h1>Bid</h1>
+    <div class="subtitle">Material cost estimator — Pacific Northwest pricing, 2026 &nbsp;·&nbsp; <strong style="color:#94a3b8">Materials only</strong>, labor not included</div>
+  </header>
+
+  <div class="layout">
+
+    <!-- ── INPUTS ── -->
+    <div class="input-panel">
+
+      <div class="input-group">
+        <div class="group-title">Building Footprint</div>
+        <div class="field-grid">
+          <div class="field">
+            <label>Length (ft)</label>
+            <input type="number" id="length" value="60" min="20" max="300" oninput="calc()">
+          </div>
+          <div class="field">
+            <label>Width (ft)</label>
+            <input type="number" id="width" value="40" min="20" max="200" oninput="calc()">
+          </div>
+          <div class="field">
+            <label>Stories</label>
+            <select id="stories" onchange="calc()">
+              <option value="1">1 story</option>
+              <option value="2">2 stories</option>
+            </select>
+            <div class="field-note">2-story: same roof footprint, double living area</div>
+          </div>
+          <div class="field">
+            <label>Foundation Type</label>
+            <select id="foundation" onchange="calc()">
+              <option value="slab">Concrete Slab</option>
+              <option value="crawl">Crawl Space</option>
+              <option value="basement">Full Basement</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="input-group">
+        <div class="group-title">Rooms &amp; Layout</div>
+        <div class="field-grid">
+          <div class="field">
+            <label>Bedrooms</label>
+            <select id="bedrooms" onchange="calc()">
+              <option value="1">1</option><option value="2">2</option>
+              <option value="3" selected>3</option><option value="4">4</option>
+              <option value="5">5</option><option value="6">6</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Full Baths</label>
+            <select id="fullbaths" onchange="calc()">
+              <option value="1">1</option><option value="2" selected>2</option>
+              <option value="3">3</option><option value="4">4</option><option value="5">5</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Half Baths</label>
+            <select id="halfbaths" onchange="calc()">
+              <option value="0" selected>0</option><option value="1">1</option>
+              <option value="2">2</option><option value="3">3</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Attached Garage</label>
+            <select id="garage" onchange="calc()">
+              <option value="0">None</option>
+              <option value="1">1 bay — 264 sqft (12×22)</option>
+              <option value="2" selected>2 bay — 576 sqft (24×24)</option>
+              <option value="3">3 bay — 864 sqft (36×24)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Covered Porch / Patio (sqft)</label>
+            <input type="number" id="porch" value="0" min="0" oninput="calc()">
+            <div class="field-note">Concrete flatwork only</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="input-group">
+        <div class="group-title">Interior Finish Level</div>
+        <div class="field">
+          <select id="finish" onchange="calc()" style="width:100%">
+            <option value="basic">Basic — Builder-grade; LVP throughout, stock cabinets, standard fixtures</option>
+            <option value="standard" selected>Standard — Mid-grade; semi-custom cabinets, quartz counters, better appliances</option>
+            <option value="premium">Premium — High-end; custom cabinets, hardwood/tile floors, quality appliances</option>
+            <option value="luxury">Luxury — Custom everything; stone floors, chef's kitchen, smart home systems</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="input-group">
+        <div class="group-title">Mechanical Systems</div>
+        <div class="field-grid">
+          <div class="field">
+            <label>Insulation</label>
+            <select id="insulation" onchange="calc()">
+              <option value="batt">Batt — R-21 walls / R-49 ceiling</option>
+              <option value="spray" selected>Spray Foam — closed-cell, R-6/in</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>HVAC</label>
+            <select id="hvac" onchange="calc()">
+              <option value="minisplit" selected>Mini-Split — ductless heat pump</option>
+              <option value="central">Central — ducted heat pump + ductwork</option>
+              <option value="radiant">Radiant Floor Heat</option>
+            </select>
+            <div class="field-note">Sized at 1 ton per 500 sqft</div>
+          </div>
+          <div class="field">
+            <label>Electrical Service</label>
+            <select id="electrical" onchange="calc()">
+              <option value="200">200A panel</option>
+              <option value="400" selected>400A panel (recommended)</option>
+            </select>
+            <div class="field-note">Barndos with shops often need 400A</div>
+          </div>
+          <div class="field">
+            <label>Water Heater</label>
+            <select id="hwtype" onchange="calc()">
+              <option value="tank" selected>Electric Tank (50 gal)</option>
+              <option value="tankless">Propane Tankless</option>
+              <option value="heatpump">Heat Pump Water Heater</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="input-group">
+        <div class="group-title">Site &amp; Utilities</div>
+        <div class="field-grid">
+          <div class="field">
+            <label>Site Work</label>
+            <select id="sitework" onchange="calc()">
+              <option value="minimal">Minimal — already prepped, level lot</option>
+              <option value="typical" selected>Typical — clearing &amp; grading needed</option>
+              <option value="extensive">Extensive — heavy clearing, steep grade</option>
+            </select>
+          </div>
+          <div class="field" style="justify-content:center">
+            <label class="field-check">
+              <input type="checkbox" id="wellseptic" onchange="calc()">
+              <span>Well + Septic System<br><small style="color:var(--muted)">Check if no municipal hookup (~$47k)</small></span>
+            </label>
+          </div>
+          <div class="field" style="justify-content:center">
+            <label class="field-check">
+              <input type="checkbox" id="propane" onchange="calc()">
+              <span>Propane Tank &amp; Plumbing<br><small style="color:var(--muted)">If no natural gas (~$3,500)</small></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /input-panel -->
+
+    <!-- ── SUMMARY ── -->
+    <div class="summary-panel">
+      <div class="summary-card">
+        <div class="summary-label">Estimated Material Cost</div>
+        <div class="summary-total" id="s-total">—</div>
+        <div class="summary-range" id="s-range">—</div>
+        <div class="summary-stat"><span class="lbl">Conditioned area</span><span class="val" id="s-sqft">—</span></div>
+        <div class="summary-stat"><span class="lbl">Garage</span><span class="val" id="s-garage">—</span></div>
+        <div class="summary-stat"><span class="lbl">Total building</span><span class="val" id="s-total-sqft">—</span></div>
+        <div class="summary-stat"><span class="lbl">Est. windows</span><span class="val" id="s-windows">—</span></div>
+        <div class="summary-stat"><span class="lbl">HVAC load</span><span class="val" id="s-tons">—</span></div>
+        <div class="summary-stat"><span class="lbl">Finish level</span><span class="val" id="s-finish">—</span></div>
+        <div class="summary-stat" style="margin-top:4px"><span class="lbl">Subtotal</span><span class="val" id="s-sub">—</span></div>
+        <div class="summary-stat"><span class="lbl" style="color:var(--amber)">Contingency 15%</span><span class="val" style="color:var(--amber)" id="s-cont">—</span></div>
+      </div>
+      <div class="per-sqft-box">
+        <div class="big" id="s-persqft">—</div>
+        <div class="sm">per conditioned sqft · materials only</div>
+      </div>
+      <div class="labor-callout">
+        Labor typically adds <strong>1.5× – 2.5×</strong> on top of material costs by trade. Budget <strong>$200 – $350/sqft all-in</strong> for a PNW barndominium with a general contractor. Add <strong>$8k – $25k</strong> for permits, engineering, and architect.
+      </div>
+    </div>
+
+  </div><!-- /layout -->
+
+  <!-- ── BREAKDOWN TABLE ── -->
+  <div class="breakdown">
+    <div class="section-title">Line-Item Material Breakdown</div>
+    <table class="bd-table">
+      <thead>
+        <tr>
+          <th style="width:46%">Category</th>
+          <th style="width:32%">Basis / Assumption</th>
+          <th style="width:22%">Material Cost</th>
+        </tr>
+      </thead>
+      <tbody id="bd-body"></tbody>
+    </table>
+  </div>
+
+  <!-- ── ASSUMPTIONS ── -->
+  <div class="assumptions">
+    <h3>Assumptions &amp; Scope</h3>
+    <ul>
+      <li>All figures are <strong>material cost only</strong> — no labor, no GC markup</li>
+      <li>Barndominium shell = post-frame steel kit (metal roof, metal siding, trusses, purlins, overhead doors)</li>
+      <li>PNW seismic zone D requirements (+10–15%) are reflected in framing and foundation rates</li>
+      <li>WA State Energy Code (2021) compliance assumed — affects insulation and window specs</li>
+      <li>2-story: same roof footprint; second floor framed with LVL beams and engineered lumber</li>
+      <li>Garage: attached under the same roof, slab-on-grade regardless of main foundation type</li>
+      <li>Window count: 1 per 100 sqft living area + egress per bedroom + 1 per bath (min 4)</li>
+      <li>Interior doors: 1 per bedroom + 1 per bath + 3 misc (pantry, utility, closets)</li>
+      <li>Kitchen covers cabinets, countertops, sink/faucet, and a standard appliance package</li>
+      <li>Plumbing includes rough-in pipe, fixtures, and water heater; no water softener or RO</li>
+      <li>Electrical includes panel, meter base, all branch circuits, devices, and fixture rough-in</li>
+      <li>HVAC sized at 1 ton per 500 sqft; actual load calc may differ for high-ceiling barndos</li>
+      <li>Well: 300–400 ft drilled, submersible pump, pressure tank ($25k avg)</li>
+      <li>Septic: conventional gravity system, 3–4 BR size ($22k avg)</li>
+      <li>Site work excludes permits, soil engineering, and utility trenching to street</li>
+      <li>Driveway, fencing, landscaping, and outbuildings are not included</li>
+      <li>Prices sourced from PNW supplier quotes, RS Means, and regional builder surveys (2025–2026)</li>
+    </ul>
+    <div class="warn-box">
+      ⚠ Labor multipliers by trade (materials × this): Framing 1.8× · Concrete 2.0× · Electrical 2.5× · Plumbing 2.5× · HVAC 2.0× · Finish carpentry 1.6× · Painting 1.5×. For a rough all-in budget, multiply this estimate by <strong>2.0–2.5×</strong> then add permits and engineering.
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+var GARAGE_SQFT = { 0:0, 1:264, 2:576, 3:864 };
+var FINISH_LABEL = { basic:'Basic', standard:'Standard', premium:'Premium', luxury:'Luxury' };
+
+function fmt(n) { return '$' + Math.round(n).toLocaleString(); }
+
+function row(name, note, basis, cost) {
+  var costHtml = cost > 0
+    ? '<div class="cat-cost">' + fmt(cost) + '</div>'
+    : '<div class="cat-zero">—</div>';
+  return '<tr><td><div class="cat-name">' + name + '</div><div class="cat-note">' + note + '</div></td>'
+    + '<td><div class="cat-basis">' + basis + '</div></td>'
+    + '<td>' + costHtml + '</td></tr>';
+}
+
+function calc() {
+  var length    = parseFloat(document.getElementById('length').value)    || 0;
+  var width     = parseFloat(document.getElementById('width').value)     || 0;
+  var stories   = parseInt(document.getElementById('stories').value);
+  var beds      = parseInt(document.getElementById('bedrooms').value);
+  var full      = parseInt(document.getElementById('fullbaths').value);
+  var half      = parseInt(document.getElementById('halfbaths').value);
+  var finish    = document.getElementById('finish').value;
+  var found     = document.getElementById('foundation').value;
+  var bays      = parseInt(document.getElementById('garage').value);
+  var porchSqft = parseFloat(document.getElementById('porch').value)     || 0;
+  var insul     = document.getElementById('insulation').value;
+  var hvac      = document.getElementById('hvac').value;
+  var amps      = parseInt(document.getElementById('electrical').value);
+  var hwtype    = document.getElementById('hwtype').value;
+  var site      = document.getElementById('sitework').value;
+  var ws        = document.getElementById('wellseptic').checked;
+  var propane   = document.getElementById('propane').checked;
+
+  if (!length || !width) return;
+
+  var footprint   = length * width;
+  var conditioned = footprint * stories;
+  var garSqft     = GARAGE_SQFT[bays];
+  var totalSqft   = conditioned + garSqft;
+  var shellSqft   = footprint + garSqft; // roof area (same for 1 or 2 story)
+  var winCount    = Math.max(4, Math.ceil(conditioned / 100) + beds + full + half);
+  var tons        = Math.ceil(conditioned / 500);
+  var intDoors    = beds + full + half + 3;
+
+  // ── 1. Steel Building Shell ──
+  // Post-frame kit: structural posts, trusses, purlins, metal roofing, metal siding, trim, overhead garage doors
+  // 2-story adds 25% for taller wall panels
+  var shellRate = stories === 2 ? 25 : 20;
+  var shellCost = shellSqft * shellRate;
+
+  // ── 2. Foundation — living area ──
+  var foundRates = { slab: 10, crawl: 15, basement: 42 };
+  var foundCost  = footprint * foundRates[found];
+
+  // ── 3. Garage Slab ──
+  // Attached garage always poured slab-on-grade, even if main foundation is crawl/basement
+  var garSlabCost = garSqft * 10;
+
+  // ── 4. Interior Framing ──
+  // 2×6 stud walls, LVL headers, subfloor sheathing, second-floor deck if 2-story
+  var frameRate = stories === 2 ? 6.5 : 5.0;
+  var frameCost = conditioned * frameRate;
+
+  // ── 5. Insulation ──
+  // Walls + ceiling/roof deck; garage ceiling batt regardless of main choice
+  var insulRates = { batt: 1.8, spray: 3.4 };
+  var insulCost  = conditioned * insulRates[insul] + garSqft * 0.9;
+
+  // ── 6. Windows & Exterior Doors ──
+  // Double-pane vinyl windows; 2 entry doors; overhead garage doors (in shell kit, already counted;
+  // shown here for clarity but deducted from shell to avoid double-count — overhead doors ~$1,800/bay)
+  var winCost  = winCount * 700;
+  var doorCost = 2 * 1900; // 2 entry doors (not garage overheads — those are in shell)
+  var winDoorCost = winCost + doorCost;
+
+  // ── 7. Electrical ──
+  var panelCost  = amps === 400 ? 6500 : 3500;
+  var wireCost   = conditioned * 7.5 + garSqft * 3;
+  var elecCost   = panelCost + wireCost;
+
+  // ── 8. Plumbing ──
+  var fullRoI = { basic:4500, standard:6500, premium:9500,  luxury:16000 };
+  var halfRoI = { basic:2000, standard:3000, premium:5000,  luxury:8500  };
+  var hwCost  = { tank:1200,  tankless:3200, heatpump:2100 };
+  var plumbCost = full * fullRoI[finish] + half * halfRoI[finish] + hwCost[hwtype];
+
+  // ── 9. HVAC ──
+  var hvacRates = { minisplit: 2900, central: 5000 };
+  var hvacCost  = hvac === 'radiant' ? conditioned * 16 : tons * hvacRates[hvac];
+
+  // ── 10. Drywall ──
+  var drywallCost = conditioned * 2.80;
+
+  // ── 11. Flooring ──
+  var floorRates = { basic:4.5, standard:8.0, premium:14.0, luxury:24.0 };
+  var floorCost  = conditioned * floorRates[finish];
+
+  // ── 12. Kitchen ──
+  // Cabinets, countertops, sink/faucet, appliance package (range, hood, dishwasher, fridge)
+  var kitchenCosts = { basic:13000, standard:30000, premium:60000, luxury:125000 };
+  var kitchenCost  = kitchenCosts[finish];
+
+  // ── 13. Bathrooms ──
+  // Full: vanity, toilet, tub/shower, tile, mirror, accessories
+  // Half: vanity, toilet, mirror
+  var fullFinish = { basic:6500,  standard:15000, premium:32000, luxury:68000 };
+  var halfFinish = { basic:2800,  standard:5500,  premium:10000, luxury:22000 };
+  var bathCost   = full * fullFinish[finish] + half * halfFinish[finish];
+
+  // ── 14. Interior Doors ──
+  var doorUnitCost = { basic:280, standard:420, premium:700, luxury:1400 };
+  var intDoorCost  = intDoors * doorUnitCost[finish];
+
+  // ── 15. Interior Paint ──
+  var paintCost = conditioned * 1.30;
+
+  // ── 16. Covered Porch Flatwork ──
+  var porchCost = porchSqft * 9;
+
+  // ── 17. Well + Septic ──
+  var wsCost = ws ? 47000 : 0;
+
+  // ── 18. Propane ──
+  var propaneCost = propane ? 3500 : 0;
+
+  // ── 19. Site Work ──
+  var siteRates = { minimal:8000, typical:18000, extensive:36000 };
+  var siteCost  = siteRates[site];
+
+  var items = [
+    {
+      name: 'Steel Building Shell',
+      note: 'Post-frame structural kit: columns/posts, trusses, roof purlins, metal roofing panels, metal siding panels, trim, ridge cap, and overhead garage door(s). This is the barndominium envelope — everything outside the foundation.',
+      basis: '$'+shellRate+'/sqft × '+shellSqft.toLocaleString()+' sqft roof area'+(stories===2?' (2-story tall-wall rate)':''),
+      cost: shellCost
+    },
+    {
+      name: 'Foundation — Living Area',
+      note: found === 'slab'
+        ? 'Poured concrete slab-on-grade: 4″ reinforced slab, wire mesh, control joints, vapor barrier, perimeter rigid insulation (R-10 per WA energy code).'
+        : found === 'crawl'
+        ? 'Poured concrete perimeter walls, concrete piers, PT sill plate, vapor barrier (6-mil poly), vented crawl space per WA code.'
+        : 'Full poured concrete basement: 8″ walls, footing drain, dimple mat waterproofing, interior drainage. Structural floor above.',
+      basis: '$'+foundRates[found]+'/sqft × '+footprint.toLocaleString()+' sqft footprint',
+      cost: foundCost
+    },
+    {
+      name: 'Garage Slab',
+      note: 'Attached garage: 4″ reinforced concrete slab-on-grade, wire mesh, expansion joint at building interface, broom finish. Sloped 1/8″/ft toward door. Always poured slab regardless of main foundation type.',
+      basis: bays > 0 ? '$10/sqft × '+garSqft+' sqft ('+bays+'-bay)' : 'No garage',
+      cost: garSlabCost
+    },
+    {
+      name: 'Interior Framing',
+      note: '2×6 exterior stud walls (24″ o.c. for energy efficiency), 2×4 interior partitions (16″ o.c.), LVL and PSL beams at openings, OSB wall sheathing, blocking and backing. Includes second-floor deck (TJI joists, 3/4″ T&G OSB) if 2-story.',
+      basis: '$'+frameRate+'/sqft × '+conditioned.toLocaleString()+' sqft conditioned area',
+      cost: frameCost
+    },
+    {
+      name: 'Insulation',
+      note: insul === 'batt'
+        ? 'R-21 kraft-faced fiberglass batt (walls), R-49 blown fiberglass (attic/ceiling). WA 2021 energy code minimum. Garage ceiling: R-19 unfaced batt.'
+        : '2.5″ closed-cell spray foam in walls (R-15+), 5.5″ on roof deck (R-33+) — no thermal bridging, class II vapor retarder. Garage ceiling: R-19 batt. Superior air-sealing reduces HVAC loads.',
+      basis: '$'+insulRates[insul]+'/sqft conditioned + $0.90/sqft garage ceiling',
+      cost: insulCost
+    },
+    {
+      name: 'Windows & Entry Doors',
+      note: 'Double-pane low-E vinyl windows, U-0.30 / SHGC-0.30 (WA energy code). Includes flashing tape and rough opening framing. Two fiberglass entry doors (prehung, weatherstripped). Overhead garage doors are included in the shell kit price above.',
+      basis: winCount+' windows × $700 + 2 entry doors × $1,900',
+      cost: winDoorCost
+    },
+    {
+      name: 'Electrical',
+      note: 'Meter base, '+amps+'A main panel, breakers, all branch circuit wire (NM-B), outlets (every 12 ft per NEC), switches, bathroom GFCIs, kitchen/garage/outdoor circuits, smoke/CO detectors, panel schedule. Fixture rough-in only — light fixtures not included.',
+      basis: '$'+(amps===400?'6,500':'3,500')+' panel + $7.50/sqft wiring (living) + $3/sqft garage',
+      cost: elecCost
+    },
+    {
+      name: 'Plumbing',
+      note: 'PEX supply lines (A or B), ABS/PVC drain-waste-vent, shut-off valves, pressure-tested rough-in. Includes all fixtures: toilets, sinks, tubs/showers, faucets, p-traps. '
+        + (hwtype==='tank' ? '50-gal electric water heater.' : hwtype==='tankless' ? 'On-demand propane tankless unit (Rinnai or equiv.).' : 'Heat-pump water heater (HPWH), 80-gal.')
+        + ' No water softener, RO, or filtration.',
+      basis: full+' full × $'+fullRoI[finish].toLocaleString()+' + '+half+' half × $'+halfRoI[finish].toLocaleString()+' + water heater',
+      cost: plumbCost
+    },
+    {
+      name: 'HVAC',
+      note: hvac === 'minisplit'
+        ? 'Ductless mini-split heat pumps (cold-climate, HSPF2 ≥ 9). One indoor head per zone. Sized at 1 ton per 500 sqft. Materials: heads, compressors, lineset, line-hide, condensate drain, electrical disconnect.'
+        : hvac === 'central'
+        ? 'Ducted heat pump + air handler. Sheet metal supply/return ductwork, insulated flex connections, registers, grilles, thermostat. Sized at 1 ton per 500 sqft.'
+        : 'Hydronic radiant floor: PEX tubing, manifolds, staple-up or in-slab installation, mixing valve, circulator pump. Does not include boiler/heat source — add separate heating system.',
+      basis: hvac === 'radiant' ? '$16/sqft × '+conditioned.toLocaleString()+' sqft' : tons+' ton × $'+(hvac==='minisplit'?'2,900':'5,000')+'/ton',
+      cost: hvacCost
+    },
+    {
+      name: 'Drywall',
+      note: '½″ drywall (5/8″ Type-X in garage), corner bead, joint compound, fiberglass mesh tape, primer coat. Includes ceilings. Textured finish (orange peel) assumed.',
+      basis: '$2.80/sqft × '+conditioned.toLocaleString()+' sqft conditioned area',
+      cost: drywallCost
+    },
+    {
+      name: 'Flooring',
+      note: finish === 'basic'
+        ? 'Luxury vinyl plank (LVP) throughout, 6mm thickness, click-lock. Tile in bathrooms (12×24 ceramic).'
+        : finish === 'standard'
+        ? 'LVP in main living areas, 8mm with underlayment. Porcelain tile (12×24) in bathrooms and entry. Carpet optional in bedrooms.'
+        : finish === 'premium'
+        ? 'Engineered hardwood (3/4″, 5″ wide) in living/dining/bedroom. 12×24 porcelain tile in baths and mudroom. Tile heated in primary bath.'
+        : 'Wide-plank white oak hardwood (solid, site-finished) in all living areas. Large-format stone tile (24×24) in baths. Heated tile in primary suite.',
+      basis: '$'+floorRates[finish]+'/sqft × '+conditioned.toLocaleString()+' sqft',
+      cost: floorCost
+    },
+    {
+      name: 'Kitchen',
+      note: finish === 'basic'
+        ? 'Stock RTA cabinets (shaker style), laminate countertops, stainless steel sink/faucet, basic appliance package (range, hood, dishwasher, refrigerator — builder-grade).'
+        : finish === 'standard'
+        ? 'Semi-custom cabinets with soft-close, quartz countertops, undermount sink, mid-grade faucet, appliance suite (slide-in range, under-cabinet hood, French-door fridge, dishwasher).'
+        : finish === 'premium'
+        ? 'Custom cabinetry, quartz or granite counters, farmhouse sink, quality faucet, kitchen island, professional appliance package (36″ range, built-in fridge, double oven).'
+        : 'Full custom cabinetry with integrated hardware, thick stone counters, island seating, pro-grade appliances (48″ dual-fuel range, column fridge/freezer, wine fridge, built-in coffee).',
+      basis: 'Flat rate — cabinets, counters, sink/faucet, appliances',
+      cost: kitchenCost
+    },
+    {
+      name: 'Bathrooms',
+      note: finish === 'basic'
+        ? 'Stock vanity, elongated toilet, acrylic tub/shower, builder-grade fixtures and accessories, ceramic tile surround.'
+        : finish === 'standard'
+        ? 'Semi-custom vanity, comfort-height toilet, tile shower with glass door, quartz or solid-surface vanity top, quality fixtures.'
+        : finish === 'premium'
+        ? 'Custom vanity, freestanding or built-in tub (primary), frameless glass shower, heated tile floor (primary), designer fixtures.'
+        : 'Custom furniture-style vanities, soaking tub, curbless shower with rain head and body jets, large-format stone tile, smart toilet, heated floor.',
+      basis: full+' full × $'+fullFinish[finish].toLocaleString()+' + '+half+' half × $'+halfFinish[finish].toLocaleString(),
+      cost: bathCost
+    },
+    {
+      name: 'Interior Doors',
+      note: 'Prehung door units: slab, frame, hinges, latch/deadbolt hardware. Count: 1 per bedroom + 1 per bath + 3 misc (pantry, utility, closets).',
+      basis: intDoors+' doors × $'+doorUnitCost[finish].toLocaleString()+' per unit',
+      cost: intDoorCost
+    },
+    {
+      name: 'Interior Paint',
+      note: 'Walls and ceilings: 1 coat primer + 2 coats eggshell latex. Trim: semi-gloss. Does not include specialty finishes, wallcovering, or cabinet painting.',
+      basis: '$1.30/sqft × '+conditioned.toLocaleString()+' sqft',
+      cost: paintCost
+    },
+  ];
+
+  if (porchSqft > 0) items.push({
+    name: 'Covered Porch / Patio',
+    note: '4″ broom-finish concrete flatwork, wire mesh, control joints, isolation joint at building foundation.',
+    basis: '$9/sqft × '+porchSqft.toLocaleString()+' sqft',
+    cost: porchCost
+  });
+
+  if (ws) items.push({
+    name: 'Well + Septic System',
+    note: 'Drilled well: 300–400 ft depth, 6″ casing, submersible pump, pressure tank, pitless adapter, wellhead ($25k avg). Conventional gravity septic: 1,000-gal concrete tank, distribution box, drainfield sized for 3–4 BR ($22k avg). County permit not included.',
+    basis: '$25,000 well + $22,000 septic',
+    cost: wsCost
+  });
+
+  if (propane) items.push({
+    name: 'Propane System',
+    note: '500-gal buried propane tank (leased or purchased), regulator, gas lines to appliances, pressure test. Typical if no natural gas at site.',
+    basis: 'Flat estimate (tank + plumbing)',
+    cost: propaneCost
+  });
+
+  items.push({
+    name: 'Site Work',
+    note: site === 'minimal'
+      ? 'Lot is substantially clear and level. Includes: survey stakes, minimal grading for drainage, compaction, temporary erosion control.'
+      : site === 'typical'
+      ? 'Moderate clearing (< 1 acre), cut-and-fill grading for pad, topsoil strip/replace, compaction testing, drainage swale, crushed rock base for driveway approach.'
+      : 'Heavy tree/stump clearing, significant cut/fill (>500 CY), engineered retaining walls, drainage system, import fill material. Soil engineering report recommended.',
+    basis: site.charAt(0).toUpperCase()+site.slice(1)+' site work',
+    cost: siteCost
+  });
+
+  var subtotal    = items.reduce(function(s,it){ return s + it.cost; }, 0);
+  var contingency = subtotal * 0.15;
+  var total       = subtotal + contingency;
+
+  // Update sidebar
+  document.getElementById('s-total').textContent    = fmt(total);
+  document.getElementById('s-range').textContent    = fmt(total*0.88) + ' – ' + fmt(total*1.18) + '  (–12% / +18% range)';
+  document.getElementById('s-sqft').textContent     = conditioned.toLocaleString() + ' sqft';
+  document.getElementById('s-garage').textContent   = bays > 0 ? garSqft+' sqft ('+bays+'-bay)' : 'None';
+  document.getElementById('s-total-sqft').textContent = totalSqft.toLocaleString() + ' sqft';
+  document.getElementById('s-windows').textContent  = winCount + ' units';
+  document.getElementById('s-tons').textContent     = tons + ' ton (' + (tons*12000).toLocaleString() + ' BTU)';
+  document.getElementById('s-finish').textContent   = FINISH_LABEL[finish];
+  document.getElementById('s-sub').textContent      = fmt(subtotal);
+  document.getElementById('s-cont').textContent     = fmt(contingency);
+  document.getElementById('s-persqft').textContent  = fmt(total / conditioned) + '/sqft';
+
+  // Build table rows
+  var html = '';
+  items.forEach(function(it) {
+    html += row(it.name, it.note, it.basis, it.cost);
+  });
+  html += '<tr class="subtotal-row"><td colspan="2"><div class="cat-name">Subtotal</div></td><td><div class="cat-cost">'+fmt(subtotal)+'</div></td></tr>';
+  html += '<tr class="contingency-row"><td><div class="cat-name">Contingency (15%)</div><div class="cat-note">Material price volatility, shipping/lead-time changes, minor scope additions</div></td><td></td><td><div class="cat-cost">'+fmt(contingency)+'</div></td></tr>';
+  html += '<tr class="total-row"><td colspan="2">Total Estimated Material Cost</td><td>'+fmt(total)+'</td></tr>';
+
+  document.getElementById('bd-body').innerHTML = html;
+}
+
+calc();
+</script>
+</body>
+</html>
