@@ -154,6 +154,10 @@
     <input type="number" id="margin" value="20" min="0" max="90" step="1" oninput="calc()">
     <span style="font-size:.78rem;color:var(--muted)">%</span>
   </div>
+  <label class="tog">
+    <input type="checkbox" id="tg-lyo" onchange="toggleLyo();calc()">
+    <div><div class="tog-label">Include Lyophilization</div><div class="tog-sub">Freeze-dry cycle added to batch time &amp; cost</div></div>
+  </label>
 </div>
 
 <div class="layout">
@@ -237,6 +241,29 @@
         <div class="f-note">Filler, capper, isolator/RABS, inspection, lyophilizer if applicable</div></div>
       <div class="f"><label>Equipment Useful Life (yr)</label>
         <input type="number" id="equipLife" value="12" min="3" max="25" step="1" oninput="calc()"></div>
+    </div>
+  </div>
+
+  <div class="ig" id="lyo-group" style="display:none">
+    <div class="ig-title">Lyophilization <span style="font-size:.62rem;color:var(--muted);font-weight:400;margin-left:8px">(exclude lyophilizer from Line CAPEX above)</span></div>
+    <div class="fg">
+      <div class="f"><label>Lyophilizer CAPEX ($M)</label>
+        <input type="number" id="lyoCapex" value="8" min="0" step="0.5" oninput="calc()">
+        <div class="f-note">Freeze-dryer unit(s)</div></div>
+      <div class="f"><label>Lyophilizer Useful Life (yr)</label>
+        <input type="number" id="lyoLife" value="15" min="5" max="30" step="1" oninput="calc()"></div>
+      <div class="f"><label>Lyo Cycle Time (hr)</label>
+        <input type="number" id="lyoCycle" value="48" min="12" max="168" step="1" oninput="calc()">
+        <div class="f-note">Primary + secondary drying; typical 24–72 hr</div></div>
+      <div class="f"><label>Load / Unload Time (hr)</label>
+        <input type="number" id="lyoLoad" value="4" min="0.5" max="12" step="0.5" oninput="calc()">
+        <div class="f-note">Shelf loading, stoppering completion, unloading</div></div>
+      <div class="f"><label>Lyo Maintenance (% of CAPEX/yr)</label>
+        <input type="number" id="lyoMaint" value="8" min="0" max="20" step="0.5" oninput="calc()">
+        <div class="f-note">Vacuum systems, refrigeration, revalidation</div></div>
+      <div class="f"><label>Lyo Consumables ($/batch)</label>
+        <input type="number" id="lyoConsum" value="2000" min="0" step="100" oninput="calc()">
+        <div class="f-note">Shelf liners, lyo stoppers, cleaning agents</div></div>
     </div>
   </div>
 
@@ -393,7 +420,8 @@
     <li>Packaging &amp; Labeling applied only to released (saleable) vials</li>
     <li>3rd-party CAPEX toggle: when OFF, Facility CAPEX and Line CAPEX = $0. All OPEX still applies</li>
     <li>Profit margin applied as: total cost ÷ (1 − margin%). Margin shown as a cost line for transparency</li>
-    <li>Isolator/RABS, lyophilizer, auto-inspection system should be included in Line CAPEX if applicable</li>
+    <li>Lyophilization toggle: when ON, lyo CAPEX + maintenance + consumables are modeled as a separate cost line; freeze-dry cycle time + load/unload is added to batch cycle time, reducing annual throughput significantly. Exclude lyophilizer from Line CAPEX when using this toggle</li>
+    <li>Isolator/RABS and auto-inspection system should be included in Line CAPEX if applicable</li>
     <li>Cold-chain packaging, distribution, and post-market surveillance not included</li>
   </ul>
 </div>
@@ -401,8 +429,6 @@
 </div><!-- /container -->
 
 <script>
-var CAT_COLORS = ['#4f8ef7','#4f8ef7','#38bdf8','#38bdf8','#a78bfa','#a78bfa','#f59e0b','#10b981','#34d399'];
-
 function fmt(n,dec){
   if(n===undefined||n===null||isNaN(n))return'—';
   dec=dec||0;
@@ -411,6 +437,11 @@ function fmt(n,dec){
 function fmtN(n,dec){
   if(isNaN(n))return'—';
   return n.toFixed(dec||0).replace(/\B(?=(\d{3})+(?!\d))/g,',');
+}
+
+function toggleLyo(){
+  document.getElementById('lyo-group').style.display=
+    document.getElementById('tg-lyo').checked?'':'none';
 }
 
 function calc(){
@@ -462,13 +493,22 @@ function calc(){
   var labelC    = +document.getElementById('labelCost').value   || 0;
   var insertC   = +document.getElementById('insertCost').value  || 0;
 
+  var lyoEnabled = document.getElementById('tg-lyo').checked;
+  var lyoCapM    = +document.getElementById('lyoCapex').value   || 0;
+  var lyoLifeYr  = +document.getElementById('lyoLife').value    || 15;
+  var lyoCycHrs  = +document.getElementById('lyoCycle').value   || 48;
+  var lyoLdHrs   = +document.getElementById('lyoLoad').value    || 4;
+  var lyoMaintP  = +document.getElementById('lyoMaint').value   || 8;
+  var lyoConsumB = +document.getElementById('lyoConsum').value  || 0;
+
   if(!fillV||!conc||!batchL||!demDoses)return;
 
   // ── PRODUCTION CALCULATIONS ──
   var fillVact   = fillV * (1 + overfill/100);           // mL per vial with overfill
   var vialsPerB  = Math.floor((batchL*1000)/fillVact);   // theoretical vials per batch
   var runtimeHrs = vialsPerB / (spd * oee/100);         // fill runtime hours
-  var cycleHrs   = runtimeHrs + coHrs;                  // total batch time
+  var lyoTimeHrs = lyoEnabled ? (lyoCycHrs + lyoLdHrs) : 0;
+  var cycleHrs   = runtimeHrs + coHrs + lyoTimeHrs;     // total batch time
 
   var availHrs   = pDays * shifts * hps;                // hours/year available
   var maxBatches = Math.floor(availHrs / cycleHrs);     // capacity ceiling
@@ -530,7 +570,15 @@ function calc(){
   // 9. Packaging & Labeling — released vials only
   var pkgLabel = releasedVials * (cartonC + labelC + insertC);
 
-  var subtotal = facCapex+lnCapex+facOpex+lnOpex+dirLabor+indLabor+yieldLoss+matTotal+pkgLabel;
+  var lyoCapexAnn = 0, lyoMaintAnn = 0, lyoConsumAnn = 0, lyoCostAnn = 0;
+  if(lyoEnabled){
+    lyoCapexAnn = inclCapex ? (lyoCapM*1e6/lyoLifeYr)*u : 0;
+    lyoMaintAnn = lyoCapM*1e6 * lyoMaintP/100 * u;
+    lyoConsumAnn= lyoConsumB * batchesRun;
+    lyoCostAnn  = lyoCapexAnn + lyoMaintAnn + lyoConsumAnn;
+  }
+
+  var subtotal = facCapex+lnCapex+facOpex+lnOpex+dirLabor+indLabor+yieldLoss+matTotal+pkgLabel+lyoCostAnn;
   var marginAmt= subtotal * (marginPct/100) / (1 - marginPct/100);
   var grandTotal= subtotal + marginAmt;
 
@@ -584,39 +632,46 @@ function calc(){
   var rows=[
     {name:'Facility CAPEX',
      note:'Cleanroom, HVAC, WFI system, utility infrastructure — annualized. '+(inclCapex?'':'3rd-party funded — excluded.'),
-     yr:facCapex,disabled:!inclCapex},
+     yr:facCapex,disabled:!inclCapex,color:'#4f8ef7'},
     {name:'Line / Equipment CAPEX',
-     note:'Filling line, isolator/RABS, auto-inspection, lyophilizer (if applicable) — annualized. '+(inclCapex?'':'3rd-party funded — excluded.'),
-     yr:lnCapex,disabled:!inclCapex},
+     note:'Filling line, isolator/RABS, auto-inspection'+(lyoEnabled?' (lyophilizer modeled separately)':', lyophilizer if applicable')+' — annualized. '+(inclCapex?'':'3rd-party funded — excluded.'),
+     yr:lnCapex,disabled:!inclCapex,color:'#4f8ef7'},
+  ];
+  if(lyoEnabled){
+    rows.push({name:'Lyophilization',
+     note:'Cycle '+lyoCycHrs+' hr + load/unload '+lyoLdHrs+' hr added per batch. CAPEX: '+fmt(lyoCapexAnn)+(inclCapex?'':' (3rd-party, excluded)')+'. Maintenance '+lyoMaintP+'% × $'+lyoCapM+'M: '+fmt(lyoMaintAnn)+'. Consumables $'+fmtN(lyoConsumB)+'/batch × '+batchesRun+' batches: '+fmt(lyoConsumAnn)+'.',
+     yr:lyoCostAnn,color:'#22d3ee'});
+  }
+  rows=rows.concat([
     {name:'Facility OPEX',
      note:'Building maintenance '+facMaintP+'% × $'+facCapM+'M + regulatory/compliance $'+fmtN(regAnn)+'/yr. Scaled by '+util+'% line utilization.',
-     yr:facOpex},
+     yr:facOpex,color:'#38bdf8'},
     {name:'Line OPEX',
      note:'Equipment maintenance '+eqMaintP+'% × $'+lnCapM+'M + utilities $'+fmtN(utilAnn)+'/yr (scaled '+util+'%) + QC testing $'+fmtN(qcBatch)+'/batch × '+batchesRun+' batches (100%).',
-     yr:lnOpex},
+     yr:lnOpex,color:'#38bdf8'},
     {name:'Direct Labor',
      note:dFTE+' FTE operators × '+pDays+' days × '+shifts+' shifts × '+hps+' hrs/shift × $'+dRate+'/hr. Scaled by '+util+'% utilization.',
-     yr:dirLabor},
+     yr:dirLabor,color:'#a78bfa'},
     {name:'Indirect Labor',
      note:iFTE+' FTE (QA, QC, supervisors, maintenance) × 2,080 hr/yr × $'+iRate+'/hr. Scaled by '+util+'% utilization.',
-     yr:indLabor},
+     yr:indLabor,color:'#a78bfa'},
     {name:'Yield Loss',
      note:fmtN(rejectedVials)+' rejected vials × (API $'+apiPerVial.toFixed(2)+' + components $'+compPerVial.toFixed(2)+')/vial. IPC yield '+byPct+'% × release rate '+rrPct+'% = '+yieldLossPct.toFixed(1)+'% total loss.',
-     yr:yieldLoss},
+     yr:yieldLoss,color:'#f59e0b'},
     {name:'Materials & Consumables',
      note:'API for '+fmtN(releasedVials)+' released vials ($'+fmt(matAPI)+') + components ($'+fmt(matComp)+') + excipients all batches ($'+fmt(matExcip)+') + batch consumables ($'+fmt(matConsum)+').',
-     yr:matTotal},
+     yr:matTotal,color:'#10b981'},
     {name:'Packaging & Labeling',
      note:'Carton $'+cartonC+' + label $'+labelC+' + insert $'+insertC+' = $'+(cartonC+labelC+insertC).toFixed(2)+'/vial × '+fmtN(releasedVials)+' released vials.',
-     yr:pkgLabel},
-  ];
+     yr:pkgLabel,color:'#34d399'},
+  ]);
 
   var html='';
   rows.forEach(function(r,i){
     var pct=grandTotal>0?r.yr/grandTotal*100:0;
     var cpd_r=dosesReleased>0?r.yr/dosesReleased:0;
     var barW=Math.min(100,pct*3.5);
-    var col=CAT_COLORS[i]||'#4f8ef7';
+    var col=r.color||'#4f8ef7';
     html+='<tr'+(r.disabled?' class="disabled-row"':'')+'>'
       +'<td><div class="cat-name">'+r.name+'</div><div class="cat-note">'+r.note+'</div>'
       +'<div class="cat-bar-wrap"><div class="cat-bar" style="width:'+barW+'%;background:'+col+'"></div></div></td>'
