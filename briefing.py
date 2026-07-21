@@ -371,7 +371,8 @@ def get_equipment_deals():
                     url = (f"https://www.machinerytrader.com/listings/construction/for-sale/"
                            f"compact-track-loaders/list/?State={state}&priceMin=20000&priceMax=85000")
                     page.goto(url, timeout=20000)
-                    page.wait_for_load_state("networkidle", timeout=20000)
+                    page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    page.wait_for_timeout(2500)
                     cards = page.query_selector_all("article, .item-details, [class*='listing-card'], li.result")
                     for card in cards:
                         try:
@@ -404,7 +405,8 @@ def get_equipment_deals():
                     url = (f"https://www.equipmenttrader.com/compact-track-loaders-for-sale/"
                            f"?state%5B%5D={state}&price%5Bmin%5D=20000&price%5Bmax%5D=85000")
                     page.goto(url, timeout=20000)
-                    page.wait_for_load_state("networkidle", timeout=20000)
+                    page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    page.wait_for_timeout(2500)
                     cards = page.query_selector_all("[data-cmp='searchListing'], article, .listing-item, [class*='listing']")
                     for card in cards:
                         try:
@@ -435,7 +437,7 @@ def get_equipment_deals():
             try:
                 url = "https://www.ironplanet.com/results?category=Compact+Track+Loaders&stateProv=WA,OR,ID"
                 page.goto(url, timeout=20000)
-                page.wait_for_load_state("networkidle", timeout=20000)
+                page.wait_for_load_state("domcontentloaded", timeout=15000)
                 page.wait_for_timeout(3000)
                 cards = page.query_selector_all(".lot-card, [class*='lot-item'], [class*='LotCard'], article")
                 for card in cards:
@@ -465,7 +467,7 @@ def get_equipment_deals():
             try:
                 url = "https://www.rbauction.com/equipment?equipmentType=compact-track-loaders&state=WA,OR,ID"
                 page.goto(url, timeout=20000)
-                page.wait_for_load_state("networkidle", timeout=20000)
+                page.wait_for_load_state("domcontentloaded", timeout=15000)
                 page.wait_for_timeout(3000)
                 cards = page.query_selector_all("article, .lot-card, [class*='result-item'], [class*='listing']")
                 for card in cards:
@@ -495,7 +497,8 @@ def get_equipment_deals():
             try:
                 url = "https://www.purplewave.com/auction/search/?q=compact+track+loader"
                 page.goto(url, timeout=20000)
-                page.wait_for_load_state("networkidle", timeout=20000)
+                page.wait_for_load_state("domcontentloaded", timeout=15000)
+                page.wait_for_timeout(2500)
                 cards = page.query_selector_all("article, .auction-item, [class*='item-card'], [class*='lot']")
                 for card in cards:
                     try:
@@ -2193,9 +2196,13 @@ for cat in re_deals:
     re_deals[cat] = [d for d in re_deals[cat] if prop_id(d['link']) not in dismissed]
 print(f"Dismissed filter: {len(dismissed)} properties hidden.")
 
+html_content = build_html(stocks, news, history, ev_stocks, deals, rav4_deals, re_deals, mortgage_rate)
 path = os.path.join(_LIFE_DIR, "briefing.html")
 with open(path, "w") as f:
-    f.write(build_html(stocks, news, history, ev_stocks, deals, rav4_deals, re_deals, mortgage_rate))
+    f.write(html_content)
+# Also write index.html for GitHub Pages (beenhameen.github.io/Briefing)
+with open(os.path.join(_LIFE_DIR, "index.html"), "w") as f:
+    f.write(html_content)
 
 # Local server — handles dismiss POSTs and serves the HTML
 class _Handler(http.server.BaseHTTPRequestHandler):

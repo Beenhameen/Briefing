@@ -277,6 +277,40 @@
         </div>
       </div>
 
+      <div class="input-group">
+        <div class="group-title">Solar System</div>
+        <div class="field-grid">
+          <div class="field">
+            <label>System Type</label>
+            <select id="solar-type" onchange="calc()">
+              <option value="none">Not included</option>
+              <option value="gridtied">Grid-Tied (net metering)</option>
+              <option value="battery">Battery Backup</option>
+            </select>
+            <div class="field-note">Sized to offset ~85% of estimated load · PNW sun hours</div>
+          </div>
+          <div class="field" id="battery-field" style="display:none">
+            <label>Battery Units</label>
+            <select id="battery-count" onchange="calc()">
+              <option value="1">1 unit — 13.5 kWh</option>
+              <option value="2" selected>2 units — 27 kWh</option>
+              <option value="3">3 units — 40.5 kWh</option>
+            </select>
+            <div class="field-note">1 unit ≈ 1 day essentials; 2+ for extended outages</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:14px">
+          <label class="field-check" style="flex:1;min-width:160px">
+            <input type="checkbox" id="ev" checked onchange="calc()">
+            <span>EV Charging<br><small style="color:var(--muted)">+300 kWh/mo (~1,000 mi/mo)</small></span>
+          </label>
+          <label class="field-check" style="flex:1;min-width:160px">
+            <input type="checkbox" id="hottub" checked onchange="calc()">
+            <span>Hot Tub<br><small style="color:var(--muted)">+350 kWh/mo (240V, heated)</small></span>
+          </label>
+        </div>
+      </div>
+
     </div><!-- /input-panel -->
 
     <!-- ── SUMMARY ── -->
@@ -291,6 +325,7 @@
         <div class="summary-stat"><span class="lbl">Est. windows</span><span class="val" id="s-windows">—</span></div>
         <div class="summary-stat"><span class="lbl">HVAC load</span><span class="val" id="s-tons">—</span></div>
         <div class="summary-stat"><span class="lbl">Finish level</span><span class="val" id="s-finish">—</span></div>
+        <div class="summary-stat" id="s-solar-row" style="display:none"><span class="lbl">Solar system</span><span class="val" id="s-solar">—</span></div>
         <div class="summary-stat" style="margin-top:4px"><span class="lbl">Subtotal</span><span class="val" id="s-sub">—</span></div>
         <div class="summary-stat"><span class="lbl" style="color:var(--amber)">Contingency 15%</span><span class="val" style="color:var(--amber)" id="s-cont">—</span></div>
       </div>
@@ -479,6 +514,57 @@ function calc() {
   var siteRates = { minimal:8000, typical:18000, extensive:36000 };
   var siteCost  = siteRates[site];
 
+  // ── 20. Solar System ──
+  var solarType  = document.getElementById('solar-type').value;
+  var evLoad     = document.getElementById('ev').checked;
+  var hottubLoad = document.getElementById('hottub').checked;
+  var battCount  = parseInt(document.getElementById('battery-count').value) || 2;
+  document.getElementById('battery-field').style.display = solarType === 'battery' ? '' : 'none';
+
+  var solarCost = 0, solarSystemKw = 0, solarPanelCount = 0;
+  var solarName = '', solarNote = '', solarBasis = '';
+
+  if (solarType !== 'none') {
+    var baseKwh     = conditioned * 0.45;
+    if (hvac === 'central') baseKwh *= 1.10;
+    if (hvac === 'radiant') baseKwh *= 1.20;
+    var monthlyLoad  = baseKwh + (evLoad ? 300 : 0) + (hottubLoad ? 350 : 0);
+    var peakSunHrs   = 3.8;   // western WA/OR annual average
+    var derate       = 0.82;  // NREL system derate
+    var monthlyPerKw = peakSunHrs * 30 * derate;  // ~93.7 kWh/kW/month
+    solarSystemKw    = Math.ceil((monthlyLoad * 0.85) / monthlyPerKw * 10) / 10;
+    solarPanelCount  = Math.ceil(solarSystemKw * 1000 / 400);  // 400W panels
+    var monthlyProd  = solarSystemKw * monthlyPerKw;
+    var offsetPct    = Math.min(100, Math.round(monthlyProd / monthlyLoad * 100));
+
+    var inverterRateW = solarType === 'battery' ? 0.25 : 0.18;  // hybrid vs string
+    var totalRateW    = 0.38 + inverterRateW + 0.18 + 0.14;     // panels + inverter + racking + BOS
+    var solarBaseW    = solarSystemKw * 1000 * totalRateW;
+
+    var battMat = 0, battNoteStr = '';
+    if (solarType === 'battery') {
+      battMat     = battCount * 9500 + 2500;  // 13.5 kWh units + transfer gateway
+      battNoteStr = battCount + ' × 13.5 kWh battery ' + (battCount > 1 ? 'units' : 'unit')
+                  + ' + transfer gateway. ';
+    }
+
+    solarCost  = solarBaseW + battMat;
+    var itcAmt = solarCost * 0.30;
+    var loadsStr = [evLoad ? 'EV' : '', hottubLoad ? 'hot tub' : ''].filter(Boolean).join(' + ');
+
+    solarName  = 'Solar — ' + (solarType === 'battery' ? 'Battery Backup' : 'Grid-Tied');
+    solarNote  = solarPanelCount + ' × 400W monocrystalline panels (' + solarSystemKw.toFixed(1) + ' kW). '
+               + (solarType === 'battery' ? 'Hybrid inverter' : 'String inverter')
+               + ', roof-mount racking, BOS (wiring, conduit, disconnects, monitoring). '
+               + battNoteStr
+               + 'Est. load: ' + Math.round(monthlyLoad) + ' kWh/mo'
+               + (loadsStr ? ' (base + ' + loadsStr + ')' : '')
+               + '. PNW output ~' + Math.round(monthlyProd) + ' kWh/mo → ~' + offsetPct + '% offset. '
+               + '30% federal ITC ≈ ' + fmt(itcAmt) + ' tax credit (not deducted above).';
+    solarBasis = solarSystemKw.toFixed(1) + ' kW × $' + totalRateW.toFixed(2) + '/W'
+               + (solarType === 'battery' ? ' + ' + battCount + '-unit battery' : '');
+  }
+
   var items = [
     {
       name: 'Steel Building Shell',
@@ -623,6 +709,10 @@ function calc() {
     cost: propaneCost
   });
 
+  if (solarType !== 'none') items.push({
+    name: solarName, note: solarNote, basis: solarBasis, cost: solarCost
+  });
+
   items.push({
     name: 'Site Work',
     note: site === 'minimal'
@@ -647,6 +737,12 @@ function calc() {
   document.getElementById('s-windows').textContent  = winCount + ' units';
   document.getElementById('s-tons').textContent     = tons + ' ton (' + (tons*12000).toLocaleString() + ' BTU)';
   document.getElementById('s-finish').textContent   = FINISH_LABEL[finish];
+  if (solarType !== 'none') {
+    document.getElementById('s-solar-row').style.display = '';
+    document.getElementById('s-solar').textContent = solarSystemKw.toFixed(1) + ' kW · ' + solarPanelCount + ' panels';
+  } else {
+    document.getElementById('s-solar-row').style.display = 'none';
+  }
   document.getElementById('s-sub').textContent      = fmt(subtotal);
   document.getElementById('s-cont').textContent     = fmt(contingency);
   document.getElementById('s-persqft').textContent  = fmt(total / conditioned) + '/sqft';
