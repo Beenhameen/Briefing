@@ -7,11 +7,35 @@ import webbrowser
 import json
 import re
 import math
+import os
+import hashlib
+import http.server
+import socketserver
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from urllib.request import urlopen
 from playwright.sync_api import sync_playwright
 from homeharvest import scrape_property
+
+# --- DISMISSED PROPERTIES ---
+_LIFE_DIR = os.path.dirname(os.path.abspath(__file__))
+DISMISSED_PATH = os.path.join(_LIFE_DIR, 'dismissed_properties.json')
+BRIEFING_PORT = 8765
+
+def load_dismissed():
+    try:
+        with open(DISMISSED_PATH) as f:
+            return set(json.load(f))
+    except Exception:
+        return set()
+
+def save_dismissed(dismissed_set):
+    with open(DISMISSED_PATH, 'w') as f:
+        json.dump(sorted(dismissed_set), f, indent=2)
+
+def prop_id(link):
+    return hashlib.md5(link.encode()).hexdigest()[:16]
 
 TODAY = datetime.now()
 MONTH = TODAY.month
@@ -224,10 +248,36 @@ def make_sparkline(prices, color, height=48):
         f'</svg>'
     )
 
+# --- MORTGAGE ---
+def get_mortgage_rate():
+    try:
+        url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=MORTGAGE30US"
+        with urlopen(url, timeout=8) as r:
+            lines = r.read().decode().strip().split("\n")
+        for line in reversed(lines[1:]):
+            parts = line.split(",")
+            if len(parts) == 2 and parts[1].strip() != ".":
+                return float(parts[1].strip())
+    except:
+        pass
+    return 6.74  # fallback: ~30-year fixed as of early 2026
+
+def monthly_payment(price, down, annual_rate, years=30):
+    principal = price - down
+    if principal <= 0:
+        return 0
+    r = annual_rate / 100 / 12
+    n = years * 12
+    return round(principal * r * (1 + r)**n / ((1 + r)**n - 1))
+
 # --- BUILD HTML ---
 # --- EQUIPMENT DEALS ---
-SKID_KEYWORDS  = ["skid steer", "skid loader", "track loader"]
-EXCAV_KEYWORDS = ["excavator", "trackhoe", "track hoe"]
+# Cultus property: CTL for blackberry knockdown / land clearing, PNW terrain
+CTL_KEYWORDS = [
+    "compact track loader", "track loader", "ctl",
+    "259d", "259d3", "svl75", "svl 75", "t66", "t64",
+    "rt-65", "rt65", "3ts-8t", "teleskid",
+]
 ATTACHMENT_KEYWORDS = [
     "attachment", "bucket", "auger", "grapple", "blade", "broom", "sweeper",
     "mulcher", "mower", "breaker", "hammer", "forks", "fork", "coupler",
@@ -238,20 +288,18 @@ ATTACHMENT_KEYWORDS = [
     "for excavator", "for mini", "fits ", "fits:"
 ]
 MACHINE_BRANDS = [
-    "bobcat", "cat ", "caterpillar", "deere", "kubota", "komatsu", "case ",
-    "volvo", "doosan", "takeuchi", "yanmar", "hitachi", "new holland",
-    "gehl", "mustang", "terex", "hyundai", "samsung", "kobelco", "sumitomo",
-    "jcb", "wacker", "vermeer", "ditch witch", "thomas", "melroe"
+    "bobcat", "cat ", "caterpillar", "kubota", "asv", "jcb",
+    "case ", "new holland", "gehl", "mustang", "takeuchi",
 ]
 CL_SEARCHES = [
-    ("seattle",   "skid steer"),
-    ("seattle",   "excavator"),
-    ("portland",  "skid steer"),
-    ("portland",  "excavator"),
-    ("spokane",   "skid steer"),
-    ("spokane",   "excavator"),
+    ("seattle",   "compact track loader"),
+    ("seattle",   "track loader"),
+    ("tacoma",    "compact track loader"),
+    ("portland",  "compact track loader"),
+    ("spokane",   "compact track loader"),
+    ("olympia",   "compact track loader"),
 ]
-AVG_PRICES = {"Skid Steers": 28000, "Excavators": 45000}
+AVG_PRICES = {"Compact Track Loaders": 42000}
 
 def is_full_machine(title):
     t = title.lower()
@@ -263,89 +311,35 @@ def is_full_machine(title):
 
 def classify(title):
     t = title.lower()
-    if any(k in t for k in SKID_KEYWORDS):
-        return "Skid Steers"
-    if any(k in t for k in EXCAV_KEYWORDS):
-        return "Excavators"
+    if any(k in t for k in CTL_KEYWORDS):
+        return "Compact Track Loaders"
     return None
 
+def _add_ctl(results, seen, title, price, link, source):
+    if not link or link in seen:
+        return
+    seen.add(link)
+    cat = classify(title) or "Compact Track Loaders"
+    avg = AVG_PRICES[cat]
+    discount = round((avg - price) / avg * 100, 1)
+    results[cat].append({"title": title, "price": price, "avg": avg,
+                          "discount": discount, "link": link, "source": source})
+
 def get_equipment_deals():
-    results = {"Skid Steers": [], "Excavators": []}
+    results = {"Compact Track Loaders": []}
     seen = set()
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=True)
-            page = browser.new_page()
+            ctx = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            )
+            page = ctx.new_page()
+
+            # ── Craigslist ──
             for city, query in CL_SEARCHES:
                 try:
                     url = f"https://{city}.craigslist.org/search/hvo?query={query.replace(' ', '+')}"
-                    page.goto(url, timeout=15000)
-                    page.wait_for_load_state("networkidle", timeout=15000)
-                    cards = page.query_selector_all("[data-pid]")
-                    for card in cards:
-                        try:
-                            link_el = card.query_selector("a")
-                            if not link_el:
-                                continue
-                            link = link_el.get_attribute("href")
-                            if not link or link in seen:
-                                continue
-                            seen.add(link)
-                            text = card.inner_text()
-                            price_match = re.search(r'\$([\d,]+)', text)
-                            if not price_match:
-                                continue
-                            price = int(price_match.group(1).replace(",", ""))
-                            if price < 5000 or price > 350000:
-                                continue
-                            lines = [l.strip() for l in text.split("\n") if l.strip() and not l.strip() == "•"]
-                            title = next((l for l in lines if len(l) > 8 and "$" not in l), lines[0] if lines else "")
-                            if not is_full_machine(title):
-                                continue
-                            if "kubota" not in title.lower():
-                                continue
-                            cat = classify(title)
-                            if not cat:
-                                cat = "Skid Steers" if "skid" in query else "Excavators"
-                            avg = AVG_PRICES[cat]
-                            discount = round((avg - price) / avg * 100, 1)
-                            results[cat].append({
-                                "title": title,
-                                "price": price,
-                                "avg": avg,
-                                "discount": discount,
-                                "link": link,
-                                "source": f"{city.capitalize()} · Craigslist",
-                            })
-                        except:
-                            pass
-                except:
-                    pass
-            browser.close()
-    except Exception as e:
-        print(f"Equipment scrape error: {e}")
-
-    for cat in results:
-        results[cat].sort(key=lambda x: x["discount"], reverse=True)
-        results[cat] = results[cat][:5]
-    return results
-
-
-# --- RAV4 PRIME DEALS ---
-RAV4_AVG_PRICE  = 43000   # avg used 2021-2024 RAV4 Prime in PNW
-RAV4_LIFESPAN   = 250000  # Toyota RAV4 industry average miles
-RAV4_CITIES     = ["seattle", "tacoma", "portland", "spokane"]
-
-def get_rav4_deals():
-    results = []
-    seen = set()
-    try:
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
-            page = browser.new_page()
-            for city in RAV4_CITIES:
-                try:
-                    url = f"https://{city}.craigslist.org/search/cto?query=RAV4+Prime"
                     page.goto(url, timeout=15000)
                     page.wait_for_load_state("networkidle", timeout=15000)
                     for card in page.query_selector_all("[data-pid]"):
@@ -354,53 +348,362 @@ def get_rav4_deals():
                             if not link_el:
                                 continue
                             link = link_el.get_attribute("href")
-                            if not link or link in seen:
-                                continue
-                            seen.add(link)
                             text = card.inner_text()
-                            tl = text.lower()
-                            if "rav4" not in tl or "prime" not in tl:
+                            pm = re.search(r'\$([\d,]+)', text)
+                            if not pm:
                                 continue
-                            price_match = re.search(r'\$([\d,]+)', text)
-                            if not price_match:
-                                continue
-                            price = int(price_match.group(1).replace(",", ""))
-                            if price < 20000 or price > 70000:
+                            price = int(pm.group(1).replace(",", ""))
+                            if price < 20000 or price > 85000:
                                 continue
                             lines = [l.strip() for l in text.split("\n") if l.strip() and l.strip() != "•"]
                             title = next((l for l in lines if len(l) > 8 and "$" not in l), lines[0] if lines else "")
-                            discount = round((RAV4_AVG_PRICE - price) / RAV4_AVG_PRICE * 100, 1)
-                            # Extract odometer
-                            odo = None
-                            m = re.search(r'\b(\d{1,3},\d{3})\s*(?:miles?|mi)\b', text, re.IGNORECASE)
-                            if m:
-                                odo = int(m.group(1).replace(",", ""))
-                            else:
-                                m2 = re.search(r'\b(\d+)k\s*(?:miles?|mi)\b', text, re.IGNORECASE)
-                                if m2:
-                                    odo = int(m2.group(1)) * 1000
-                            remaining = max(0, RAV4_LIFESPAN - odo) if odo is not None else None
-                            cpm = round(price / remaining, 2) if remaining else None
-                            results.append({
-                                "title": title,
-                                "price": price,
-                                "avg": RAV4_AVG_PRICE,
-                                "discount": discount,
-                                "link": link,
-                                "source": f"{city.capitalize()} · Craigslist",
-                                "odometer": odo,
-                                "remaining": remaining,
-                                "cost_per_mile": cpm,
-                            })
+                            if not is_full_machine(title):
+                                continue
+                            _add_ctl(results, seen, title, price, link, f"{city.capitalize()} · Craigslist")
                         except:
                             pass
                 except:
                     pass
+
+            # ── MachineryTrader ──
+            for state in ["WA", "OR"]:
+                try:
+                    url = (f"https://www.machinerytrader.com/listings/construction/for-sale/"
+                           f"compact-track-loaders/list/?State={state}&priceMin=20000&priceMax=85000")
+                    page.goto(url, timeout=20000)
+                    page.wait_for_load_state("networkidle", timeout=20000)
+                    cards = page.query_selector_all("article, .item-details, [class*='listing-card'], li.result")
+                    for card in cards:
+                        try:
+                            text = card.inner_text()
+                            pm = re.search(r'\$\s*([\d,]+)', text)
+                            if not pm:
+                                continue
+                            price = int(pm.group(1).replace(",", ""))
+                            if price < 20000 or price > 85000:
+                                continue
+                            link_el = card.query_selector("a")
+                            if not link_el:
+                                continue
+                            link = link_el.get_attribute("href") or ""
+                            if link and not link.startswith("http"):
+                                link = "https://www.machinerytrader.com" + link
+                            lines = [l.strip() for l in text.split("\n") if l.strip() and "$" not in l]
+                            title = next((l for l in lines if len(l) > 8), lines[0] if lines else "")
+                            if not is_full_machine(title):
+                                continue
+                            _add_ctl(results, seen, title, price, link, f"MachineryTrader · {state}")
+                        except:
+                            pass
+                except:
+                    pass
+
+            # ── EquipmentTrader ──
+            for state in ["WA", "OR"]:
+                try:
+                    url = (f"https://www.equipmenttrader.com/compact-track-loaders-for-sale/"
+                           f"?state%5B%5D={state}&price%5Bmin%5D=20000&price%5Bmax%5D=85000")
+                    page.goto(url, timeout=20000)
+                    page.wait_for_load_state("networkidle", timeout=20000)
+                    cards = page.query_selector_all("[data-cmp='searchListing'], article, .listing-item, [class*='listing']")
+                    for card in cards:
+                        try:
+                            text = card.inner_text()
+                            pm = re.search(r'\$\s*([\d,]+)', text)
+                            if not pm:
+                                continue
+                            price = int(pm.group(1).replace(",", ""))
+                            if price < 20000 or price > 85000:
+                                continue
+                            link_el = card.query_selector("a")
+                            if not link_el:
+                                continue
+                            link = link_el.get_attribute("href") or ""
+                            if link and not link.startswith("http"):
+                                link = "https://www.equipmenttrader.com" + link
+                            lines = [l.strip() for l in text.split("\n") if l.strip() and "$" not in l]
+                            title = next((l for l in lines if len(l) > 8), lines[0] if lines else "")
+                            if not is_full_machine(title):
+                                continue
+                            _add_ctl(results, seen, title, price, link, f"EquipmentTrader · {state}")
+                        except:
+                            pass
+                except:
+                    pass
+
+            # ── IronPlanet ──
+            try:
+                url = "https://www.ironplanet.com/results?category=Compact+Track+Loaders&stateProv=WA,OR,ID"
+                page.goto(url, timeout=20000)
+                page.wait_for_load_state("networkidle", timeout=20000)
+                page.wait_for_timeout(3000)
+                cards = page.query_selector_all(".lot-card, [class*='lot-item'], [class*='LotCard'], article")
+                for card in cards:
+                    try:
+                        text = card.inner_text()
+                        pm = re.search(r'\$\s*([\d,]+)', text)
+                        if not pm:
+                            continue
+                        price = int(pm.group(1).replace(",", ""))
+                        if price < 20000 or price > 85000:
+                            continue
+                        link_el = card.query_selector("a")
+                        if not link_el:
+                            continue
+                        link = link_el.get_attribute("href") or ""
+                        if link and not link.startswith("http"):
+                            link = "https://www.ironplanet.com" + link
+                        lines = [l.strip() for l in text.split("\n") if l.strip() and "$" not in l]
+                        title = next((l for l in lines if len(l) > 8), lines[0] if lines else "")
+                        _add_ctl(results, seen, title, price, link, "IronPlanet · Auction")
+                    except:
+                        pass
+            except:
+                pass
+
+            # ── Ritchie Bros ──
+            try:
+                url = "https://www.rbauction.com/equipment?equipmentType=compact-track-loaders&state=WA,OR,ID"
+                page.goto(url, timeout=20000)
+                page.wait_for_load_state("networkidle", timeout=20000)
+                page.wait_for_timeout(3000)
+                cards = page.query_selector_all("article, .lot-card, [class*='result-item'], [class*='listing']")
+                for card in cards:
+                    try:
+                        text = card.inner_text()
+                        pm = re.search(r'\$\s*([\d,]+)', text)
+                        if not pm:
+                            continue
+                        price = int(pm.group(1).replace(",", ""))
+                        if price < 20000 or price > 85000:
+                            continue
+                        link_el = card.query_selector("a")
+                        if not link_el:
+                            continue
+                        link = link_el.get_attribute("href") or ""
+                        if link and not link.startswith("http"):
+                            link = "https://www.rbauction.com" + link
+                        lines = [l.strip() for l in text.split("\n") if l.strip() and "$" not in l]
+                        title = next((l for l in lines if len(l) > 8), lines[0] if lines else "")
+                        _add_ctl(results, seen, title, price, link, "Ritchie Bros · Auction")
+                    except:
+                        pass
+            except:
+                pass
+
+            # ── Purple Wave ──
+            try:
+                url = "https://www.purplewave.com/auction/search/?q=compact+track+loader"
+                page.goto(url, timeout=20000)
+                page.wait_for_load_state("networkidle", timeout=20000)
+                cards = page.query_selector_all("article, .auction-item, [class*='item-card'], [class*='lot']")
+                for card in cards:
+                    try:
+                        text = card.inner_text()
+                        pm = re.search(r'\$\s*([\d,]+)', text)
+                        if not pm:
+                            continue
+                        price = int(pm.group(1).replace(",", ""))
+                        if price < 20000 or price > 85000:
+                            continue
+                        link_el = card.query_selector("a")
+                        if not link_el:
+                            continue
+                        link = link_el.get_attribute("href") or ""
+                        if link and not link.startswith("http"):
+                            link = "https://www.purplewave.com" + link
+                        lines = [l.strip() for l in text.split("\n") if l.strip() and "$" not in l]
+                        title = next((l for l in lines if len(l) > 8), lines[0] if lines else "")
+                        _add_ctl(results, seen, title, price, link, "Purple Wave · Auction")
+                    except:
+                        pass
+            except:
+                pass
+
             browser.close()
     except Exception as e:
-        print(f"RAV4 scrape error: {e}")
-    results.sort(key=lambda x: x["discount"], reverse=True)
-    return results[:10]
+        print(f"Equipment scrape error: {e}")
+
+    for cat in results:
+        results[cat].sort(key=lambda x: x["discount"], reverse=True)
+        results[cat] = results[cat][:8]
+    return results
+
+
+# --- PHEV DEALS ---
+# Your current vehicle
+CURRENT_CAR_MPG   = 24      # 2009 Honda CR-V combined MPG
+CURRENT_CAR_TRADE = 4500    # KBB fair condition, 160k mi
+FUEL_PRICE_GAL    = 3.50    # $/gallon
+ANNUAL_MILES      = 15000
+LONG_TRIPS_MO     = 2       # long trips per month
+LONG_TRIP_MI      = 300     # round-trip miles per long trip
+# Electricity cost = $0 (solar)
+
+PHEV_SPECS = {
+    'RAV4 Prime':     {'ev': 42, 'mpg': 38, 'life': 250000, 'avg': 43000},
+    'Escape PHEV':    {'ev': 37, 'mpg': 40, 'life': 200000, 'avg': 30000},
+    'Tucson PHEV':    {'ev': 33, 'mpg': 35, 'life': 200000, 'avg': 33000},
+    'Outlander PHEV': {'ev': 38, 'mpg': 30, 'life': 200000, 'avg': 30000},
+}
+
+PHEV_CL_SEARCHES = [
+    ('seattle',  'RAV4 Prime'),
+    ('tacoma',   'RAV4 Prime'),
+    ('portland', 'RAV4 Prime'),
+    ('spokane',  'RAV4 Prime'),
+    ('seattle',  'Escape PHEV'),
+    ('portland', 'Escape PHEV'),
+    ('seattle',  'Outlander PHEV'),
+    ('portland', 'Tucson PHEV'),
+]
+
+def _detect_phev_model(text):
+    t = text.lower()
+    if 'rav4' in t and 'prime' in t:     return 'RAV4 Prime'
+    if 'escape' in t and 'phev' in t:    return 'Escape PHEV'
+    if 'tucson' in t and 'phev' in t:    return 'Tucson PHEV'
+    if 'outlander' in t and 'phev' in t: return 'Outlander PHEV'
+    return None
+
+def phev_roi(price, odometer, model_name):
+    spec = PHEV_SPECS.get(model_name, PHEV_SPECS['RAV4 Prime'])
+    odo = odometer or 0
+    remaining = max(0, spec['life'] - odo) if odometer is not None else None
+    cpm = round(price / remaining, 3) if remaining else None
+    net_cost = price - CURRENT_CAR_TRADE
+
+    current_fuel_yr = (ANNUAL_MILES / CURRENT_CAR_MPG) * FUEL_PRICE_GAL
+
+    # Solar = free electricity. Gas only on long trips beyond EV range.
+    # Each 300-mi round trip: 2 × ev_range miles electric, rest gas.
+    gas_mi_per_trip = max(0, LONG_TRIP_MI - 2 * spec['ev'])
+    gas_mi_yr = LONG_TRIPS_MO * 12 * gas_mi_per_trip
+    phev_fuel_yr = (gas_mi_yr / spec['mpg']) * FUEL_PRICE_GAL
+
+    savings_yr = current_fuel_yr - phev_fuel_yr
+    payback = (net_cost / savings_yr) if savings_yr > 0 else None
+
+    return {
+        'remaining':  remaining,
+        'cpm':        cpm,
+        'net_cost':   net_cost,
+        'fuel_yr':    round(phev_fuel_yr),
+        'savings_yr': round(savings_yr),
+        'payback_yr': round(payback, 1) if payback else None,
+        'gain_5yr':   round(savings_yr * 5 - net_cost),
+        'gain_10yr':  round(savings_yr * 10 - net_cost),
+    }
+
+def _extract_odo(text):
+    m = re.search(r'\b(\d{1,3},\d{3})\s*(?:miles?|mi)\b', text, re.I)
+    if m: return int(m.group(1).replace(',', ''))
+    m2 = re.search(r'\b(\d+)k\s*(?:miles?|mi)\b', text, re.I)
+    if m2: return int(m2.group(1)) * 1000
+    return None
+
+def get_phev_deals():
+    results = []
+    seen = set()
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            page = browser.new_page()
+
+            # ── Craigslist ──
+            for city, query in PHEV_CL_SEARCHES:
+                try:
+                    url = f"https://{city}.craigslist.org/search/cto?query={query.replace(' ', '+')}"
+                    page.goto(url, timeout=15000)
+                    page.wait_for_load_state("networkidle", timeout=15000)
+                    for card in page.query_selector_all("[data-pid]"):
+                        try:
+                            link_el = card.query_selector("a")
+                            if not link_el: continue
+                            link = link_el.get_attribute("href")
+                            if not link or link in seen: continue
+                            seen.add(link)
+                            text = card.inner_text()
+                            pm = re.search(r'\$([\d,]+)', text)
+                            if not pm: continue
+                            price = int(pm.group(1).replace(',', ''))
+                            if price < 15000 or price > 80000: continue
+                            lines = [l.strip() for l in text.split('\n') if l.strip() and l.strip() != '•']
+                            title = next((l for l in lines if len(l) > 8 and '$' not in l), lines[0] if lines else '')
+                            model = _detect_phev_model(title) or _detect_phev_model(query)
+                            if not model: continue
+                            odo = _extract_odo(text)
+                            spec = PHEV_SPECS[model]
+                            roi = phev_roi(price, odo, model)
+                            results.append({
+                                'title':    title,
+                                'model':    model,
+                                'price':    price,
+                                'avg':      spec['avg'],
+                                'discount': round((spec['avg'] - price) / spec['avg'] * 100, 1),
+                                'link':     link,
+                                'source':   f"{city.capitalize()} · Craigslist",
+                                'odometer': odo,
+                                'roi':      roi,
+                                'salvage':  False,
+                            })
+                        except: pass
+                except: pass
+
+            # ── Copart (salvage auction) ──
+            for query in ['RAV4 Prime', 'Escape PHEV', 'Outlander PHEV']:
+                try:
+                    url = f"https://www.copart.com/public/lots/search?query={query.replace(' ', '+')}"
+                    page.goto(url, timeout=20000)
+                    page.wait_for_timeout(4000)
+                    cards = page.query_selector_all('.lot-card, [class*="lot-details"], [class*="LotCard"]')
+                    for card in cards[:8]:
+                        try:
+                            text = card.inner_text()
+                            if len(text) < 10: continue
+                            pm = re.search(r'\$\s*([\d,]+)', text)
+                            if not pm: continue
+                            price = int(pm.group(1).replace(',', ''))
+                            if price < 3000 or price > 55000: continue
+                            link_el = card.query_selector('a')
+                            href = link_el.get_attribute('href') if link_el else ''
+                            if href and not href.startswith('http'):
+                                href = 'https://www.copart.com' + href
+                            key = href or text[:60]
+                            if key in seen: continue
+                            seen.add(key)
+                            lines = [l.strip() for l in text.split('\n') if l.strip()]
+                            title = lines[0] if lines else query
+                            model = _detect_phev_model(title) or _detect_phev_model(query)
+                            if not model: continue
+                            odo = _extract_odo(text)
+                            spec = PHEV_SPECS[model]
+                            roi = phev_roi(price, odo, model)
+                            results.append({
+                                'title':    f'[SALVAGE] {title}',
+                                'model':    model,
+                                'price':    price,
+                                'avg':      spec['avg'],
+                                'discount': round((spec['avg'] - price) / spec['avg'] * 100, 1),
+                                'link':     href or url,
+                                'source':   'Copart · Salvage Auction',
+                                'odometer': odo,
+                                'roi':      roi,
+                                'salvage':  True,
+                            })
+                        except: pass
+                except: pass
+
+            browser.close()
+    except Exception as e:
+        print(f"PHEV scrape error: {e}")
+
+    results.sort(key=lambda x: x['roi']['gain_5yr'], reverse=True)
+    return results[:15]
+
+# Keep alias so build_html signature doesn't need to change
+def get_rav4_deals():
+    return get_phev_deals()
 
 
 # --- REAL ESTATE DEALS ---
@@ -603,7 +906,7 @@ def get_realestate_deals():
     return results
 
 
-def build_html(stocks, news, history, ev_stocks, deals, rav4_deals, re_deals):
+def build_html(stocks, news, history, ev_stocks, deals, rav4_deals, re_deals, mortgage_rate=6.74):
     date_str = TODAY.strftime("%A, %B %d %Y")
     context = build_context(stocks)
     ev_data, ev_error = build_ev_context(ev_stocks)
@@ -691,37 +994,58 @@ def build_html(stocks, news, history, ev_stocks, deals, rav4_deals, re_deals):
     for cat, items in deals.items():
         deals_html += f'<div class="subsection-title">{cat}</div>{render_deal_list(items)}'
 
-    def render_rav4_table(items):
+    def render_phev_cards(items):
         if not items:
-            return '<div class="no-deals">No RAV4 Prime listings found today.</div>'
-        rows = ""
+            return '<div class="no-deals">No PHEV listings found today.</div>'
+        current_fuel_yr = round((ANNUAL_MILES / CURRENT_CAR_MPG) * FUEL_PRICE_GAL)
+        header = f"""<div class="phev-assumptions">
+          <span><strong>Your CR-V:</strong> ~${current_fuel_yr:,}/yr fuel ({ANNUAL_MILES:,} mi @ {CURRENT_CAR_MPG} MPG, ${FUEL_PRICE_GAL}/gal)</span>
+          <span><strong>Trade-in:</strong> ~${CURRENT_CAR_TRADE:,}</span>
+          <span><strong>Electricity:</strong> $0 (solar)</span>
+          <span><strong>Long trips:</strong> {LONG_TRIPS_MO}×/mo, {LONG_TRIP_MI} mi round-trip</span>
+        </div>"""
+        cards = ""
         for d in items:
-            odo_str  = f"{d['odometer']:,} mi" if d.get("odometer") else "—"
-            rem_str  = f"{d['remaining']:,} mi" if d.get("remaining") else "—"
-            cpm_str  = f"${d['cost_per_mile']:.2f}/mi" if d.get("cost_per_mile") else "—"
-            color    = "#10b981" if d["discount"] > 0 else "#ef4444"
-            disc_str = f"-{d['discount']}%" if d["discount"] > 0 else f"+{abs(d['discount'])}%"
-            rows += f"""
-          <tr>
-            <td><a class="re-link" href="{d['link']}" target="_blank">{d['title']}</a><div class="re-source">{d['source']}</div></td>
-            <td class="re-num">${d['price']:,}</td>
-            <td class="re-num" style="color:{color}">{disc_str}</td>
-            <td class="re-num">{odo_str}</td>
-            <td class="re-num">{rem_str}</td>
-            <td class="re-num">{cpm_str}</td>
-          </tr>"""
-        return f"""
-        <table class="re-table">
-          <thead><tr>
-            <th>Listing</th>
-            <th style="width:100px">Price</th>
-            <th style="width:72px">vs Avg</th>
-            <th style="width:96px">Odometer</th>
-            <th style="width:100px">Remaining</th>
-            <th style="width:96px">$/mi left</th>
-          </tr></thead>
-          <tbody>{rows}</tbody>
-        </table>"""
+            roi = d['roi']
+            disc_color = "#10b981" if d['discount'] > 0 else "#ef4444"
+            disc_str   = f"-{d['discount']}%" if d['discount'] > 0 else f"+{abs(d['discount'])}% over avg"
+            odo_str    = f"{d['odometer']:,} mi" if d.get('odometer') else "unknown"
+            rem_str    = f"{roi['remaining']:,}" if roi.get('remaining') else "—"
+            cpm_str    = f"${roi['cpm']:.3f}" if roi.get('cpm') else "—"
+            pay_str    = f"{roi['payback_yr']} yrs" if roi.get('payback_yr') else "—"
+            g5c        = "#10b981" if roi['gain_5yr'] > 0 else "#ef4444"
+            g10c       = "#10b981" if roi['gain_10yr'] > 0 else "#ef4444"
+            g5_str     = f"{'+'if roi['gain_5yr']>=0 else ''}${roi['gain_5yr']:,}"
+            g10_str    = f"{'+'if roi['gain_10yr']>=0 else ''}${roi['gain_10yr']:,}"
+            salvage_tag = '<span class="salvage-tag">SALVAGE TITLE</span>' if d.get('salvage') else ''
+            cards += f"""
+        <div class="phev-card{' phev-salvage' if d.get('salvage') else ''}">
+          <div class="phev-card-top">
+            <div style="min-width:0">
+              <a href="{d['link']}" target="_blank" class="phev-card-title">{d['title']}</a>
+              <div class="phev-card-meta">
+                <span class="phev-model-tag">{d['model']}</span>
+                {d['source']} · {odo_str}
+                {salvage_tag}
+              </div>
+            </div>
+            <div class="phev-price-block">
+              <div class="phev-price-num">${d['price']:,}</div>
+              <div class="phev-price-vs" style="color:{disc_color}">{disc_str}</div>
+            </div>
+          </div>
+          <div class="phev-metrics">
+            <div class="phev-metric"><div class="phev-metric-label">Net After Trade-in</div><div class="phev-metric-val">${roi['net_cost']:,}</div></div>
+            <div class="phev-metric"><div class="phev-metric-label">Rem. Miles Est.</div><div class="phev-metric-val">{rem_str}</div></div>
+            <div class="phev-metric"><div class="phev-metric-label">$ / Rem. Mile</div><div class="phev-metric-val">{cpm_str}</div></div>
+            <div class="phev-metric"><div class="phev-metric-label">Fuel Cost / yr</div><div class="phev-metric-val">${roi['fuel_yr']:,} <span style="font-size:.7rem;color:var(--muted)">(solar)</span></div></div>
+            <div class="phev-metric"><div class="phev-metric-label">Annual Savings</div><div class="phev-metric-val" style="color:#10b981">+${roi['savings_yr']:,}</div></div>
+            <div class="phev-metric"><div class="phev-metric-label">Payback Period</div><div class="phev-metric-val">{pay_str}</div></div>
+            <div class="phev-metric"><div class="phev-metric-label">5yr Net</div><div class="phev-metric-val" style="color:{g5c}">{g5_str}</div></div>
+            <div class="phev-metric"><div class="phev-metric-label">10yr Net</div><div class="phev-metric-val" style="color:{g10c}">{g10_str}</div></div>
+          </div>
+        </div>"""
+        return header + f'<div class="phev-list">{cards}</div>'
 
     re_id_counter = [0]
 
@@ -749,23 +1073,29 @@ def build_html(stocks, news, history, ev_stocks, deals, rav4_deals, re_deals):
             dist_val = d['distance'] if d['distance'] is not None else ""
             has_gis = d.get("lat") is not None and d.get("lon") is not None
             gis_btn = f'<button class="gis-btn" onclick="toggleGIS({i},{d["lat"]},{d["lon"]},{d.get("lot_sqft",43560)})">&#x1F5FA; GIS</button>' if has_gis else ""
+            pid = prop_id(d['link'])
+            dismiss_btn = f'<button class="dismiss-btn" onclick="dismissProp(\'{pid}\',this)">&#x2715; Dismiss</button>'
+            p500 = monthly_payment(d['price'], 500000, mortgage_rate)
+            p750 = monthly_payment(d['price'], 750000, mortgage_rate)
+            mort_str = f"${p500:,}/mo" if p500 > 0 else "—"
             rows += f"""
-          <tr data-idx="{i}" data-price="{d['price']}" data-acres="{d['acres'] or ''}" data-per-acre="{pa_val}" data-distance="{dist_val}">
-            <td><a class="re-link" href="{d['link']}" target="_blank">{d['title']}</a><div class="re-source">{d['source']}</div>{gis_btn}</td>
+          <tr data-idx="{i}" data-propid="{pid}" data-price="{d['price']}" data-acres="{d['acres'] or ''}" data-per-acre="{pa_val}" data-distance="{dist_val}">
+            <td><a class="re-link" href="{d['link']}" target="_blank">{d['title']}</a><div class="re-source">{d['source']}</div><div class="re-actions">{gis_btn}{dismiss_btn}</div></td>
             <td class="re-num">${d['price']:,}</td>
             <td class="re-num">{acres_str}</td>
             <td class="re-num">{per_acre_str}</td>
             <td class="re-num">{dist_str}</td>
+            <td class="re-num re-mort" data-p500="{p500}" data-p750="{p750}">{mort_str}</td>
           </tr>"""
             if carousel:
                 rows += f"""
           <tr class="re-photo-row" data-for="{i}">
-            <td colspan="5" class="re-photo-cell">{carousel}</td>
+            <td colspan="6" class="re-photo-cell">{carousel}</td>
           </tr>"""
             if has_gis:
                 rows += f"""
           <tr class="re-map-row" id="gisrow-{i}" data-for="{i}" style="display:none">
-            <td colspan="5" class="re-map-cell">
+            <td colspan="6" class="re-map-cell">
               <div class="gis-stat" id="gisstat-{i}">Loading wetland data…</div>
               <div id="gismap-{i}" class="re-map"></div>
             </td>
@@ -778,6 +1108,7 @@ def build_html(stocks, news, history, ev_stocks, deals, rav4_deals, re_deals):
             <th style="width:72px"  class="re-sortable" onclick="sortRE(this,'acres')">Acres</th>
             <th style="width:100px" class="re-sortable" onclick="sortRE(this,'perAcre')">$/Acre</th>
             <th style="width:96px"  class="re-sortable" onclick="sortRE(this,'distance')">Distance ↗</th>
+            <th style="width:110px">Est. Monthly</th>
           </tr></thead>
           <tbody>{rows}</tbody>
         </table>"""
@@ -1242,6 +1573,26 @@ def build_html(stocks, news, history, ev_stocks, deals, rav4_deals, re_deals):
     color: var(--accent);
   }}
 
+  .re-actions {{ display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }}
+
+  .dismiss-btn {{
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 0.65rem;
+    letter-spacing: 1px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }}
+
+  .dismiss-btn:hover {{
+    border-color: #ef4444;
+    color: #ef4444;
+  }}
+
   .re-map-cell {{ padding: 0 14px 16px; }}
 
   .gis-stat {{
@@ -1395,6 +1746,115 @@ def build_html(stocks, news, history, ev_stocks, deals, rav4_deals, re_deals):
     border-color: var(--accent);
     color: #fff;
   }}
+
+  .dp-controls {{
+    display: flex;
+    gap: 6px;
+    margin-bottom: 14px;
+  }}
+
+  .dp-btn {{
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 0.68rem;
+    letter-spacing: 1px;
+    padding: 5px 13px;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }}
+
+  .dp-btn:hover {{
+    border-color: rgba(255,255,255,0.15);
+    color: var(--text);
+  }}
+
+  .dp-btn.active {{
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }}
+
+  /* ── PHEV Cards ── */
+  .phev-assumptions {{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 2px solid var(--accent);
+    border-radius: 0 10px 10px 0;
+    padding: 14px 20px;
+    margin-bottom: 20px;
+    font-size: 0.8rem;
+    color: #64748b;
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+  }}
+  .phev-assumptions strong {{ color: #94a3b8; }}
+  .phev-list {{ display: flex; flex-direction: column; gap: 14px; }}
+  .phev-card {{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 22px;
+    transition: border-color 0.15s;
+  }}
+  .phev-card:hover {{ border-color: rgba(255,255,255,0.12); }}
+  .phev-salvage {{ border-color: rgba(245,158,11,0.25) !important; }}
+  .phev-card-top {{
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 14px;
+  }}
+  .phev-card-title {{
+    color: #e2e8f0;
+    text-decoration: none;
+    font-size: 0.95rem;
+    font-weight: 500;
+    display: block;
+    margin-bottom: 3px;
+  }}
+  .phev-card-title:hover {{ color: var(--accent); }}
+  .phev-card-meta {{ font-size: 0.74rem; color: var(--muted); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }}
+  .phev-model-tag {{
+    background: rgba(79,142,247,0.12);
+    color: var(--accent);
+    font-size: 0.62rem;
+    font-weight: 600;
+    letter-spacing: 1px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid rgba(79,142,247,0.25);
+  }}
+  .salvage-tag {{
+    background: rgba(245,158,11,0.12);
+    color: #f59e0b;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid rgba(245,158,11,0.3);
+  }}
+  .phev-price-block {{ text-align: right; flex-shrink: 0; }}
+  .phev-price-num {{ font-size: 1.4rem; font-weight: 700; color: #fff; }}
+  .phev-price-vs {{ font-size: 0.78rem; margin-top: 2px; }}
+  .phev-metrics {{
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 8px;
+  }}
+  .phev-metric {{
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 13px;
+  }}
+  .phev-metric-label {{ font-size: 0.62rem; color: var(--muted); letter-spacing: 0.5px; margin-bottom: 5px; text-transform: uppercase; }}
+  .phev-metric-val {{ font-size: 0.92rem; font-weight: 600; color: #e2e8f0; }}
 </style>
 </head>
 <body>
@@ -1429,17 +1889,22 @@ def build_html(stocks, news, history, ev_stocks, deals, rav4_deals, re_deals):
   </section>
 
   <section>
-    <div class="section-title">Equipment Deals — PNW Craigslist</div>
+    <div class="section-title">CTL Deals — PNW Craigslist</div>
     {deals_html}
   </section>
 
   <section>
-    <div class="section-title">RAV4 Prime — PNW Craigslist</div>
-    {render_rav4_table(rav4_deals)}
+    <div class="section-title">PHEV Market — Used Plug-in Hybrids (PNW)</div>
+    {render_phev_cards(rav4_deals)}
   </section>
 
   <section>
     <div class="section-title">Real Estate Deals — PNW Craigslist</div>
+    <div class="dp-controls">
+      <button class="dp-btn active" data-dp="500" onclick="setDP(500)">$500k down</button>
+      <button class="dp-btn" data-dp="750" onclick="setDP(750)">$750k down</button>
+    </div>
+    <div style="font-size:0.75rem;color:var(--muted);margin-bottom:14px;">30-yr fixed @ {mortgage_rate:.2f}% (FRED MORTGAGE30US)</div>
     {re_deals_html}
   </section>
 
@@ -1491,6 +1956,27 @@ document.addEventListener('keydown', function(e) {{
   if (e.key === 'ArrowLeft')   lbStep(-1);
   if (e.key === 'ArrowRight')  lbStep(1);
 }});
+
+function dismissProp(pid, btn) {{
+  fetch('/dismiss', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{id: pid}})
+  }}).then(function(r) {{ return r.json(); }}).then(function() {{
+    var tr = btn.closest('tr');
+    var idx = tr.dataset.idx;
+    tr.style.transition = 'opacity 0.35s';
+    tr.style.opacity = '0';
+    setTimeout(function() {{
+      tr.style.display = 'none';
+      document.querySelectorAll('tr[data-for="' + idx + '"]').forEach(function(r) {{
+        r.style.display = 'none';
+      }});
+    }}, 350);
+  }}).catch(function() {{
+    alert('Could not save dismissal. Is the briefing server still running?');
+  }});
+}}
 
 var _gisMaps = {{}};
 
@@ -1665,6 +2151,16 @@ function rcScroll(id, dir) {{
 
   setPeriod('1M');
 }})();
+
+function setDP(k) {{
+  document.querySelectorAll('.dp-btn').forEach(function(b) {{
+    b.classList.toggle('active', b.dataset.dp == k);
+  }});
+  document.querySelectorAll('.re-mort').forEach(function(td) {{
+    var v = parseInt(td.dataset['p' + k]);
+    td.textContent = v > 0 ? '$' + v.toLocaleString() + '/mo' : '—';
+  }});
+}}
 </script>
 </body>
 </html>"""
@@ -1681,19 +2177,68 @@ history = get_history()
 print("Scanning Craigslist for RAV4 Prime deals...")
 rav4_deals = get_rav4_deals()
 print(f"RAV4 results: {len(rav4_deals)}")
-print("Scanning PNW Craigslist for equipment deals...")
+print("Scanning PNW Craigslist for CTL deals...")
 deals = get_equipment_deals()
-print("Equipment results:", {k: len(v) for k, v in deals.items()})
+print("CTL results:", {k: len(v) for k, v in deals.items()})
 print("Fetching real estate listings (Realtor.com MLS + Craigslist FSBO)...")
 re_deals = get_realestate_deals()
 print("Real estate results:", {k: len(v) for k, v in re_deals.items()})
+print("Fetching mortgage rate...")
+mortgage_rate = get_mortgage_rate()
+print(f"Mortgage rate: {mortgage_rate}%")
 
-import os as _os
-path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "briefing.html")
+# Filter dismissed properties before building HTML
+dismissed = load_dismissed()
+for cat in re_deals:
+    re_deals[cat] = [d for d in re_deals[cat] if prop_id(d['link']) not in dismissed]
+print(f"Dismissed filter: {len(dismissed)} properties hidden.")
+
+path = os.path.join(_LIFE_DIR, "briefing.html")
 with open(path, "w") as f:
-    f.write(build_html(stocks, news, history, ev_stocks, deals, rav4_deals, re_deals))
+    f.write(build_html(stocks, news, history, ev_stocks, deals, rav4_deals, re_deals, mortgage_rate))
 
-print("Opening briefing...")
-if not _os.environ.get("CI"):
-    webbrowser.open(f"file://{path}")
-print("Done.")
+# Local server — handles dismiss POSTs and serves the HTML
+class _Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path in ('/', '/briefing'):
+            with open(path, 'rb') as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(data)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        if self.path == '/dismiss':
+            n = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(n))
+            pid = body.get('id', '')
+            if pid:
+                d = load_dismissed()
+                d.add(pid)
+                save_dismissed(d)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+if not os.environ.get("CI"):
+    socketserver.TCPServer.allow_reuse_address = True
+    httpd = socketserver.TCPServer(('', BRIEFING_PORT), _Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    print(f"Serving briefing at http://localhost:{BRIEFING_PORT} — press Ctrl+C to stop")
+    webbrowser.open(f"http://localhost:{BRIEFING_PORT}")
+    try:
+        threading.Event().wait()
+    except KeyboardInterrupt:
+        httpd.shutdown()
+        print("Done.")
